@@ -6,7 +6,7 @@ import statistics
 import torch
 from torch.nn.functional import linear as native_linear
 
-from kernels.linear import linear as triton_linear, matvec
+from kernels.linear import linear as triton_linear
 
 
 def graph_time(operation, x, weights):
@@ -55,23 +55,15 @@ def select_linears(model, batch):
         best = native_linear
         reference = native_linear(x, weights[0])
         best_ms = graph_time(best, x, weights)
-        native_ms = best_ms
-        candidates = [partial(triton_linear, split=split)
-                      for split in ((1,) if name == "head" else (2, 4, 8))]
-        candidates.append(partial(triton_linear, split=1 if name == "head" else 4,
-                                  block_n=128, block_k=128))
-        if name != "head":
-            candidates.append(partial(triton_linear, split=8, block_n=128, block_k=64))
-        if batch <= 4:
-            candidates.append(matvec)
-        for candidate in candidates:
+        for split in ((1,) if name == "head" else (2, 4, 8)):
+            candidate = partial(triton_linear, split=split)
             result = candidate(x, weights[0])
             # Detect implementation mistakes before selecting a kernel. End-to-
             # end greedy/teacher-forced validation is still required separately.
             if not torch.allclose(result, reference, rtol=0.016, atol=0.002):
                 continue
             elapsed = graph_time(candidate, x, weights)
-            if elapsed < best_ms:
+            if elapsed < best_ms * 0.90:
                 best, best_ms = candidate, elapsed
-        selected[name] = best if best_ms < native_ms * 0.95 else native_linear
+        selected[name] = best
     return selected

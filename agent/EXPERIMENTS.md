@@ -337,6 +337,17 @@ validation here does not establish numerical correctness.
 
 ## Stage 12 — wider GEMM tiles and direct small-batch GEMV
 
+- Commit: `2532e1ff7cc6922f80a629c1ef266895109f6f53`.
+- Submission: `6bcab0c7-a6ad-4d7a-853d-b65e8d31d6f0`.
+- Run: `be613823-a15b-4c57-97e9-9849f92e2758`; **passed every gate at
+  815.5 tokens/s**, +0.3% versus stage 11a.
+- Raw report: `agent/results/stage12_wide.json`.
+- Public throughput: 209.2 / 421.9 / 2571.2 tokens/s.
+- TTFT/native: 0.77 / 0.74 / 0.72; TPOT/native: 0.17 / 0.18 / 0.20.
+- Revert this broader search: tiny score change does not justify a >12-minute
+  run and additional compilation. Stage 13 uses the stable stage 11a matrix
+  selection, so its comparison base is 813.4 tokens/s.
+
 - Adds 128-column tensor-core tiles with K=64/128 to warmup comparisons.
 - Adds direct FP32 product/reduction over BF16 inputs and weights for B<=4.
   These are exact matrix products with different reduction ordering, retaining
@@ -364,3 +375,15 @@ validation here does not establish numerical correctness.
   Reset logical cache length and recompute the first token before graph reset.
   Measured calls do not repeat prefill or capture.
 - Keep stage 12 matrix changes unsubmitted until this stability fix is measured.
+
+
+## Stage 13 — packed QKV and fused normalization/rotary for prefill
+
+- Extends the tested Q/K epilogue over [B,T] rows. COS/SIN index prompt token
+  positions; K/V writes token-major cache positions 0..T-1. Decode retains
+  device-side absolute positions for T=1.
+- Uses the existing packed BF16 QKV projection for prefill, then one epilogue
+  instead of separate head norms, rotary intermediates, and cache copies.
+- Native causal GQA FlashAttention reads the initialized prefix views directly.
+  The FP32/BF16 cast boundaries remain identical to the tested decode kernel.
+- Static archive checks pass. Stage 12 measured and reverted; submit prefill fusion next.

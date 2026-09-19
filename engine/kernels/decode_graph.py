@@ -89,7 +89,7 @@ class DecodeGraph:
                 self.linears["qkv"](n, attn.qkv_weight), attn, position_embeddings,
                 self.position, self.cache.flat_keys[layer_idx],
                 self.cache.flat_values[layer_idx], self.capacity,
-            )
+            ).squeeze(1)
             # PyTorch 2.5.1's variable-length FlashAttention entry point accepts
             # GQA directly. cu_key describes reserved batch segments; seqused_k
             # limits each segment to the device-side initialized prefix. These

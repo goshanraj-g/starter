@@ -1,7 +1,8 @@
-"""Native GQA prefill; original projections and BF16 boundaries."""
+"""Packed/fused prefill using the shared BF16 Q/K epilogue."""
 
 import torch
-from transformers.models.qwen3.modeling_qwen3 import apply_rotary_pos_emb
+from torch.nn.functional import linear
+from kernels.qkv_epilogue import qkv_epilogue
 
 
 def prefill(model, input_ids, cache):
@@ -14,21 +15,16 @@ def prefill(model, input_ids, cache):
     position_embeddings = base.rotary_emb(x, positions.unsqueeze(0))
     for index, layer in enumerate(base.layers):
         attn = layer.self_attn
-        n = layer.input_layernorm(x)
-        shape = (batch, length, -1, attn.head_dim)
-        q = attn.q_norm(attn.q_proj(n).view(shape)).transpose(1, 2)
-        k = attn.k_norm(attn.k_proj(n).view(shape)).transpose(1, 2)
-        v = attn.v_proj(n).view(shape).transpose(1, 2)
-        q, k = apply_rotary_pos_emb(q, k, *position_embeddings)
-        # Native dense FlashAttention accepts [B,T,H,D], with Hq/Hkv=4.
-        # All prompt queries and keys start at position zero, so is_causal=True
-        # is the exact mask. No padded or uninitialized cache slots are passed.
+        packed = linear(layer.input_layernorm(x), attn.qkv_weight)
+        q = qkv_epilogue(
+            packed, attn, position_embeddings, positions,
+            cache.key_tokens[index], cache.value_tokens[index], cache.capacity,
+        )
         a = torch.ops.aten._flash_attention_forward(
-            q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2),
+            q, cache.key_tokens[index][:, :length], cache.value_tokens[index][:, :length],
             None, None, length, length, 0.0, True, False,
             scale=attn.scaling,
         )[0]
-        cache.update(k, v, index)
         x = x + attn.o_proj(a.reshape(batch, length, -1))
         x = x + layer.mlp(layer.post_attention_layernorm(x))
     cache.length = length
