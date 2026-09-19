@@ -335,7 +335,7 @@ validation here does not establish numerical correctness.
 - All three local tests and CLI archive checks pass. Stage 9 passed; submit grouped replay next.
 
 
-## Prepared stage 12 — wider GEMM tiles and direct small-batch GEMV
+## Stage 12 — wider GEMM tiles and direct small-batch GEMV
 
 - Adds 128-column tensor-core tiles with K=64/128 to warmup comparisons.
 - Adds direct FP32 product/reduction over BF16 inputs and weights for B<=4.
@@ -343,10 +343,18 @@ validation here does not establish numerical correctness.
   BF16 outputs. Every candidate is compared against native before timing.
 - Measures complete layer weight sets and requires a 5% improvement before
   selection. All choices remain fixed across the five measured samples.
-- CLI archive validation passes; awaiting stage 11 before submission.
+- CLI archive validation passes; stage 11a passed; submitting the matrix comparison next.
 
 
 ## Stage 11a — prime prefill allocations after graph capture
+
+- Commit: `25da6d08aeca309dbbb4337183cf2d8483f8696a`.
+- Submission: `c876d589-34db-41fe-b8dc-24394d484df8`.
+- Run: `3923ec83-f9cc-46fb-8caa-fd39b68f4d2d`; **passed every gate at
+  813.4 tokens/s**, +3.3% versus the last eligible stage 10.
+- Raw report: `agent/results/stage11a_primed.json`.
+- Public throughput: 205.8 / 415.5 / 2572.7 tokens/s.
+- TTFT/native: 0.77 / 0.74 / 0.72; TPOT/native: 0.16 / 0.18 / 0.19.
 
 - Code review found that `torch.cuda.graph` clears allocator caches on entry;
   our decode captures occur after warmup prefill, leaving its eager allocations
