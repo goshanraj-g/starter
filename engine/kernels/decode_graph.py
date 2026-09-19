@@ -28,7 +28,7 @@ class GraphCache:
 
 class DecodeGraph:
     @torch.inference_mode()
-    def __init__(self, model, storage, first_token, first_position):
+    def __init__(self, model, storage, first_token, first_position, decode_steps):
         self.model = model
         self.tokens = torch.empty_like(first_token)
         self.position = torch.empty(1, dtype=torch.int64, device=first_token.device)
@@ -39,7 +39,10 @@ class DecodeGraph:
         self.valid_lengths = torch.empty(batch, dtype=torch.int32, device=first_token.device)
         self.cache = GraphCache(storage, self.position)
         self.linears = select_linears(model, batch)
-        self.graph = torch.cuda.CUDAGraph()
+        self.chunk_size = min(8, decode_steps)
+        self.output = torch.empty((self.chunk_size, batch), dtype=torch.int64,
+                                  device=first_token.device)
+        self.graphs = {}
         stream = torch.cuda.Stream()
         current_stream = torch.cuda.current_stream()
         stream.wait_stream(current_stream)
@@ -50,11 +53,21 @@ class DecodeGraph:
                 self.reset(first_token, first_position)
                 self.step()
         current_stream.wait_stream(stream)
-        self.reset(first_token, first_position)
-        stream.wait_stream(current_stream)
-        with torch.cuda.graph(self.graph, stream=stream):
-            self.step()
-        current_stream.wait_stream(stream)
+        counts = {self.chunk_size}
+        if decode_steps % self.chunk_size:
+            counts.add(decode_steps % self.chunk_size)
+        for count in sorted(counts):
+            self.reset(first_token, first_position)
+            stream.wait_stream(current_stream)
+            graph = torch.cuda.CUDAGraph()
+            # Independent pools avoid imposing a replay order on the tail and
+            # full-group graphs. Shared inputs/cache/output have stable addresses.
+            with torch.cuda.graph(graph, stream=stream):
+                for slot in range(count):
+                    self.step()
+                    self.output[slot].copy_(self.tokens[:, 0])
+            current_stream.wait_stream(stream)
+            self.graphs[count] = graph
         self.reset(first_token, first_position)
 
     def reset(self, first_token, first_position):

@@ -20,32 +20,38 @@ class Tokens:
         self.values = values[:]
 
     def __getitem__(self, index):
-        return self
+        return Tokens(self.values[index])
 
     def tolist(self):
-        return self.values[:]
+        return [row[:] for row in self.values]
 
 
 class StreamDecodeTest(unittest.TestCase):
     def test_host_snapshots_and_exact_replay_count(self):
         for batch in (1, 4, 16):
-            for length in (2, 32, 128):
+            for length in (2, 8, 9, 10, 32, 128):
                 first = list(range(batch))
-                tokens = Tokens(first)
+                output = Tokens([])
+                state = first[:]
                 replays = []
-
-                def replay():
-                    replays.append(True)
-                    tokens.values = [value + 7 for value in tokens.values]
-
-                decoder = SimpleNamespace(tokens=tokens, graph=SimpleNamespace(replay=replay))
+                graphs = {}
+                for count in range(1, 9):
+                    def replay(count=count):
+                        replays.append(count)
+                        output.values = []
+                        for _ in range(count):
+                            state[:] = [value + 7 for value in state]
+                            output.values.append(state[:])
+                    graphs[count] = SimpleNamespace(replay=replay)
+                decoder = SimpleNamespace(output=output, graphs=graphs, chunk_size=8)
                 stream = stream_decode(decoder, first, length)
                 self.assertEqual(next(stream), first)
                 self.assertEqual(len(replays), 1)  # Next GPU step is already queued.
+                self.assertEqual(replays[0], min(8, length - 1))
                 result = [first] + list(stream)
                 self.assertEqual(result, [[i + 7 * step for i in range(batch)]
                                           for step in range(length)])
-                self.assertEqual(len(replays), length - 1)
+                self.assertEqual(sum(replays), length - 1)
                 self.assertEqual(first, list(range(batch)))
 
 

@@ -282,6 +282,14 @@ validation here does not establish numerical correctness.
 
 ## Stage 9 — overlap GPU decode with token handoff
 
+- Commit: `08ebd041c599d682e59afc79252c5b79510afc30`.
+- Submission: `68190b8f-0b46-4cbb-bedb-c19627aa6abd`.
+- Run: `d0d0a4ba-0f20-468f-ae4d-3999c3b526cd`; **passed every gate at
+  775.6 tokens/s**, +2.9% versus stage 8.
+- Raw report: `agent/results/stage9_overlap.json`.
+- Public throughput: 197.3 / 398.4 / 2439.2 tokens/s.
+- TTFT/native: 0.82 / 0.75 / 0.73; TPOT/native: 0.17 / 0.18 / 0.20.
+
 - Copy the current token IDs to an owned host list, enqueue the next graph
   replay, then yield the host list. The harness can write the current output
   while the GPU decodes the following token. No math or kernel changes.
@@ -292,3 +300,18 @@ validation here does not establish numerical correctness.
 - A local control-flow test covers batch 1/4/16, output 2/32/128, immutable host
   snapshots, and exact replay counts. All three local tests pass.
 - Stage 8 passed; submit this isolated scheduling change next.
+
+
+## Stage 10 — grouped graph replay and host copies
+
+- Capture up to eight sequential, exact single-token decode steps per graph,
+  recording each token to a persistent [group,B] int64 output buffer.
+- Copy one output group to host, enqueue the following group, then yield every
+  saved list in order. The prefill token is yielded before waiting for any
+  decode group; TTFT adds only the asynchronous graph enqueue.
+- Capture both full and tail group sizes during warmup in independent pools.
+  Include output length in the graph/cache reuse key. No graph computes extra
+  tokens past the requested length. No outstanding GPU work after final yield.
+- Local streaming test includes partial groups and exact multiples (output
+  2/8/9/10/32/128, B 1/4/16), host ownership, order and total step count.
+- All three local tests and CLI archive checks pass. Stage 9 passed; submit grouped replay next.

@@ -42,13 +42,17 @@ def qwen_forward(model, input_ids, cache):
 
 def stream_decode(decoder, first, max_new_tokens):
     """Overlap token handoff with the next step; leave no final GPU work."""
-    decoder.graph.replay()
+    remaining = max_new_tokens - 1
+    count = min(remaining, decoder.chunk_size)
+    decoder.graphs[count].replay()
     yield first
-    for step in range(1, max_new_tokens):
-        tokens = decoder.tokens[:, 0].tolist()
-        if step + 1 < max_new_tokens:
-            decoder.graph.replay()
-        yield tokens
+    while remaining:
+        tokens = decoder.output[:count].tolist()
+        remaining -= count
+        if remaining:
+            count = min(remaining, decoder.chunk_size)
+            decoder.graphs[count].replay()
+        yield from tokens
 
 
 class Engine:
@@ -90,7 +94,7 @@ class Engine:
                 return
             current = torch.tensor(input_ids, dtype=torch.int64, device="cuda:0")
             batch, prompt_length = current.shape
-            shape = (batch, prompt_length + max_new_tokens)
+            shape = (batch, prompt_length + max_new_tokens, max_new_tokens)
             if shape != self.cache_shape:
                 # Release an old shape before allocating its replacement.
                 self.decoder = None
@@ -109,7 +113,9 @@ class Engine:
                 return
             if self.decoder is None:
                 # Each workload supplies an untimed warmup of the same shape.
-                self.decoder = DecodeGraph(self.model, self.cache, current, prompt_length)
+                self.decoder = DecodeGraph(
+                    self.model, self.cache, current, prompt_length, max_new_tokens - 1,
+                )
             self.decoder.reset(current, prompt_length)
             # After copying a token to the host, start the next GPU step before
             # yielding. The harness can write the host list while decode runs.
