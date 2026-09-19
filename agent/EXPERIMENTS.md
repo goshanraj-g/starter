@@ -58,11 +58,28 @@
 
 ## 2026-09-19 — stage 1 submission
 
+- Commit: `ff6e5194137537b7c56638d68c16f0f362b18f90`.
+- Submission: `c28735a5-b722-4fca-88c8-588d31e2a6d9`.
+- Official run: `777fc681-d806-4741-962e-78f61bf33eb9`.
+- Initial state: queued, awaiting a GPU.
 - Archive lint passes. Local GPU numerical validation remains unavailable;
   correctness and timing will be evaluated by the platform.
 - Changes are limited to wrapper bypass, prefix views over preallocated KV
   storage, explicit causal masks, and reset on each generation.
 - Awaiting platform report before proceeding to CUDA graphs.
+
+### Stage 1 result and isolated prefill correction
+
+- Failed `latency_limit`. All three exposed public cases passed correctness.
+- Public 0/1/2 throughput: 54.1 / 144.1 / 712.7 tokens/s. These cross-run
+  changes cannot alone establish a speedup because native timings also shifted.
+- Public TTFT/native: 1.01 / **1.28** / 1.06. TPOT/native: 1.05 / 0.98 / 0.93.
+- Raw report: `agent/results/stage1.json`. No eligible hidden score.
+- Likely regression: explicit prefill mask changes SDPA's causal dispatch.
+- Correction retains native empty DynamicCache causal prefill with no mask,
+  then copies its KV tensors into preallocated storage. Cached forwards retain
+  the initialized-prefix view and explicit mask. No CUDA graphs or fused ops
+  added yet, to isolate the prefill change.
 
 ## Live workflow supersedes the repository's older run instructions
 
