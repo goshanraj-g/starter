@@ -6,6 +6,7 @@ from transformers import AutoModelForCausalLM, DynamicCache
 from kernels.cache import PrefixCache
 from kernels.decode_graph import DecodeGraph
 from kernels.rmsnorm import FusedRMSNorm
+from kernels.projections import pack_projections
 
 
 @torch.inference_mode()
@@ -68,6 +69,7 @@ class Engine:
             layer.post_attention_layernorm = FusedRMSNorm(layer.post_attention_layernorm)
             layer.self_attn.q_norm = FusedRMSNorm(layer.self_attn.q_norm)
             layer.self_attn.k_norm = FusedRMSNorm(layer.self_attn.k_norm)
+        pack_projections(self.model)
         self.cache = None
         self.cache_shape = None
         self.decoder = None

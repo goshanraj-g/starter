@@ -134,8 +134,15 @@
 - Archive lint passes. Numerical validation remains remote; the local harness
   compares against a separate untouched baseline model when H100 access exists.
 
-## Next candidate — native variable-length grouped-query FlashAttention
+## Stage 4 — native variable-length grouped-query FlashAttention
 
+- Commit: `42f2df5f225eabb86ec3c178beb23dc55adeb21b`.
+- Submission: `f02f0629-8eff-4de3-a03e-ffa4ded863b8`.
+- Run: `57019eb9-21ae-4aed-9940-e2cee6f4a8e3`; **passed all gates, ranked
+  at 600.5 tokens/s** (+76.8% versus stage 3).
+- Raw report: `agent/results/stage4_flash.json`.
+- Public throughput: 152.5 / 333.3 / 1889.3 tokens/s.
+- TTFT/native: 0.87 / 0.81 / 0.79; TPOT/native: 0.35 / 0.34 / 0.32.
 - Research found a suitable native operator already in the pinned runtime:
   `aten._flash_attention_forward(..., seqused_k=...)`.
 - Checked its exact [2.5.1 schema](https://raw.githubusercontent.com/pytorch/pytorch/v2.5.1/aten/src/ATen/native/native_functions.yaml)
@@ -165,10 +172,23 @@ Pinned API review:
 [Qwen3 4.51.3](https://raw.githubusercontent.com/huggingface/transformers/v4.51.3/src/transformers/models/qwen3/modeling_qwen3.py)
 passes the supplied cache to each attention layer's `update` method; direct
 decoder-layer calls avoid the model wrapper's cache type check.
-The candidate introduces no Triton or CUDA-graph API yet.
-
-Next: collect the unchanged baseline's report. Its source
-is preserved under `agent/reference/`. Run
+The unchanged baseline source is preserved under `agent/reference/`. Run
 `python3 agent/verify_engine.py MODEL_PATH` when a pinned H100 runtime is
-accessible, obtain a measured stage-1 report through the connected repository,
-record every latency gate and correctness result, then consider CUDA graphs.
+accessible. This workspace has no GPU or pinned numerical libraries; static
+validation here does not establish numerical correctness.
+
+
+## Stage 5 — packed decode projections
+
+- Concatenate Q/K/V projection rows and gate/up projection rows once during
+  model loading. Rebind native Linear weights to contiguous slices sharing the
+  packed allocations, preserving prefill without duplicating model weights.
+- Decode uses four matrix products per layer instead of seven: QKV, output,
+  gate/up, and down. Native SiLU, multiplication, norm, and rotary remain.
+- All weights, intermediate outputs, and residuals remain BF16. Packing may
+  select different cuBLAS tiling, so the platform must check correctness.
+- CLI archive validation passes. Stage 4 passed; submit this isolated projection change next.
+- Further fusion research: pinned PyTorch
+  [SiLU kernel](https://raw.githubusercontent.com/pytorch/pytorch/v2.5.1/aten/src/ATen/native/cuda/ActivationSiluKernel.cu)
+  computes x/(1+exp(-x)) in opmath precision and returns the input scalar dtype.
+  Any SwiGLU fusion must round SiLU to BF16 before multiplying by up.

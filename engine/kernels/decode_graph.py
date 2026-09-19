@@ -5,6 +5,7 @@ their contents change between replays. Host conversion is the caller's job.
 """
 
 import torch
+from torch.nn.functional import linear
 from transformers.models.qwen3.modeling_qwen3 import apply_rotary_pos_emb
 
 
@@ -70,9 +71,14 @@ class DecodeGraph:
             attn = layer.self_attn
             n = layer.input_layernorm(x)
             head_shape = (batch, 1, -1, attn.head_dim)
-            q = attn.q_norm(attn.q_proj(n).view(head_shape)).transpose(1, 2)
-            k = attn.k_norm(attn.k_proj(n).view(head_shape)).transpose(1, 2)
-            v = attn.v_proj(n).view(head_shape).transpose(1, 2)
+            q_width = attn.q_proj.out_features
+            kv_width = attn.k_proj.out_features
+            q, k, v = linear(n, attn.qkv_weight).split(
+                (q_width, kv_width, kv_width), dim=-1,
+            )
+            q = attn.q_norm(q.reshape(head_shape)).transpose(1, 2)
+            k = attn.k_norm(k.reshape(head_shape)).transpose(1, 2)
+            v = v.reshape(head_shape).transpose(1, 2)
             q, k = apply_rotary_pos_emb(q, k, *position_embeddings)
             self.cache.update(k, v, layer_idx)
             # PyTorch 2.5.1's variable-length FlashAttention entry point accepts
@@ -88,7 +94,11 @@ class DecodeGraph:
                 scale=attn.scaling, seqused_k=self.valid_lengths,
             )[0]
             x = x + attn.o_proj(a.reshape(batch, 1, -1))
-            x = x + layer.mlp(layer.post_attention_layernorm(x))
+            mlp = layer.mlp
+            gate, up = linear(
+                layer.post_attention_layernorm(x), mlp.gate_up_weight,
+            ).chunk(2, dim=-1)
+            x = x + mlp.down_proj(mlp.act_fn(gate) * up)
         logits = self.model.lm_head(base.norm(x))
         self.tokens.copy_(logits[:, -1, :].argmax(dim=-1, keepdim=True))
         self.position.add_(1)
