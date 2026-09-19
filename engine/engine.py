@@ -1,14 +1,38 @@
-"""Native Qwen3 4B engine: the starter, and a complete submission as it is.
-
-Loads the pinned checkpoint with Transformers and decodes greedily with a KV
-cache. Submit unchanged to measure starting throughput, then improve it:
-cache layout, CUDA graphs, fused kernels, chunked prefill, speculative decoding
-with exact verification. What you may not change is the answer: every token
-must be the one native Qwen picks, judged by a teacher-forced replay.
-"""
+"""Stage one: native Qwen layers with wrapper bypass and fixed KV storage."""
 
 import torch
 from transformers import AutoModelForCausalLM
+
+from kernels.cache import PrefixCache
+
+
+@torch.inference_mode()
+def qwen_forward(model, input_ids, cache):
+    base = model.model
+    x = base.embed_tokens(input_ids)
+    length = input_ids.shape[1]
+    end = cache.length + length
+    positions = torch.arange(cache.length, end, device=input_ids.device)
+    position_ids = positions.unsqueeze(0)
+    position_embeddings = base.rotary_emb(x, position_ids)
+    # Explicit absolute-position causality, including for an offset prefill.
+    # Boolean SDPA masks use True for visible keys. Only initialized slots
+    # are exposed by PrefixCache.update, never the entire reserved capacity.
+    keys = torch.arange(end, device=input_ids.device)
+    attention_mask = keys[None, None, None, :] <= positions[None, None, :, None]
+    for layer in base.layers:
+        x = layer(
+            x,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_value=cache,
+            use_cache=True,
+            cache_position=positions,
+            position_embeddings=position_embeddings,
+        )[0]
+    cache.length = end
+    x = base.norm(x)
+    return model.lm_head(x[:, -1:, :])
 
 
 class Engine:
@@ -26,6 +50,8 @@ class Engine:
             .eval()
             .to("cuda:0")
         )
+        self.cache = None
+        self.cache_shape = None
 
     def generate(self, input_ids: list[list[int]], max_new_tokens: int):
         """Greedy continuation of every sequence, one step at a time.
@@ -34,17 +60,22 @@ class Engine:
         exactly max_new_tokens times. Every sequence has the same length.
         Never stops at end-of-sequence tokens.
         """
-        current = torch.tensor(input_ids, dtype=torch.int64, device="cuda:0")
-        cache = None
         with torch.inference_mode():
-            for _ in range(max_new_tokens):
-                output = self.model(
-                    input_ids=current,
-                    past_key_values=cache,
-                    use_cache=True,
-                    logits_to_keep=1,
-                    return_dict=True,
+            if max_new_tokens <= 0:
+                return
+            current = torch.tensor(input_ids, dtype=torch.int64, device="cuda:0")
+            batch, prompt_length = current.shape
+            shape = (batch, prompt_length + max_new_tokens)
+            if shape != self.cache_shape:
+                # Release an old shape before allocating its replacement.
+                self.cache = None
+                self.cache = PrefixCache(
+                    self.model.config, batch, shape[1], current.device,
+                    self.model.dtype,
                 )
-                current = output.logits[:, -1, :].argmax(dim=-1, keepdim=True)
-                cache = output.past_key_values
+                self.cache_shape = shape
+            self.cache.reset()
+            for _ in range(max_new_tokens):
+                logits = qwen_forward(self.model, current, self.cache)
+                current = logits[:, -1, :].argmax(dim=-1, keepdim=True)
                 yield current[:, 0].tolist()
