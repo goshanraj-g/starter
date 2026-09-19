@@ -269,6 +269,16 @@ validation here does not establish numerical correctness.
 
 ## Stage 11 — residual/RMSNorm and SwiGLU fusion
 
+- Commit: `f4583d5c800fa5233568ef09f98a2122349678ce`.
+- Submission: `18a3f273-5ec8-4b7f-bc9b-dd5f04e82445`.
+- Run: `ee351947-5850-4811-b65e-808f2dd24169`; **failed unstable_timing**.
+- Public correctness and latency checks passed. Public-1 median 311.7 ms,
+  p10 309.5 ms, p90 433.8 ms, mean 351.7 ms, SD 91.2 ms. Other public
+  cases were stable. No eligible hidden score.
+- Raw report: `agent/results/stage11_pointwise.json`.
+- Public throughput: 201.0 / 410.7 / 2566.0 tokens/s.
+- TTFT/native: 0.79 / 0.75 / 0.72; TPOT/native: 0.15 / 0.17 / 0.18.
+
 - Residual addition rounds to BF16 before norm statistics; FP32 normalization
   rounds to BF16 before learned gain, then BF16 output as in the reference.
 - Carries the next layer's normalized input directly; final layer uses final
@@ -323,3 +333,26 @@ validation here does not establish numerical correctness.
 - Local streaming test includes partial groups and exact multiples (output
   2/8/9/10/32/128, B 1/4/16), host ownership, order and total step count.
 - All three local tests and CLI archive checks pass. Stage 9 passed; submit grouped replay next.
+
+
+## Prepared stage 12 — wider GEMM tiles and direct small-batch GEMV
+
+- Adds 128-column tensor-core tiles with K=64/128 to warmup comparisons.
+- Adds direct FP32 product/reduction over BF16 inputs and weights for B<=4.
+  These are exact matrix products with different reduction ordering, retaining
+  BF16 outputs. Every candidate is compared against native before timing.
+- Measures complete layer weight sets and requires a 5% improvement before
+  selection. All choices remain fixed across the five measured samples.
+- CLI archive validation passes; awaiting stage 11 before submission.
+
+
+## Stage 11a — prime prefill allocations after graph capture
+
+- Code review found that `torch.cuda.graph` clears allocator caches on entry;
+  our decode captures occur after warmup prefill, leaving its eager allocations
+  cold for the first measured sample. The aggregate timing report cannot prove
+  this caused the outlier, but it is a concrete first-sample cost to eliminate.
+- After initial graph construction, repeat prefill once during untimed warmup.
+  Reset logical cache length and recompute the first token before graph reset.
+  Measured calls do not repeat prefill or capture.
+- Keep stage 12 matrix changes unsubmitted until this stability fix is measured.

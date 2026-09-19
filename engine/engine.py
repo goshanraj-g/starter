@@ -116,6 +116,14 @@ class Engine:
                 self.decoder = DecodeGraph(
                     self.model, self.cache, current, prompt_length, max_new_tokens - 1,
                 )
+                # torch.cuda.graph clears allocator caches on entry. Capture
+                # happens after prefill, so prime its allocations again during
+                # this untimed warmup instead of leaving a cold first sample.
+                self.cache.reset()
+                prompt = torch.tensor(input_ids, dtype=torch.int64, device="cuda:0")
+                logits = qwen_forward(self.model, prompt, self.cache)
+                current = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+                first = current[:, 0].tolist()
             self.decoder.reset(current, prompt_length)
             # After copying a token to the host, start the next GPU step before
             # yielding. The harness can write the host list while decode runs.
