@@ -71,7 +71,8 @@ if __name__ == "__main__":
     import argparse
     import json
     import time
-    from client import TERMINAL
+    import urllib.error
+    from client import ApiError, TERMINAL
 
     parser = argparse.ArgumentParser(description="Watch and record an existing Dryft run")
     parser.add_argument("run_id")
@@ -82,7 +83,16 @@ if __name__ == "__main__":
     deadline = time.monotonic() + args.timeout
     previous_state = None
     while True:
-        detail = client.run(args.run_id)
+        try:
+            detail = client.run(args.run_id)
+        except (urllib.error.URLError, TimeoutError, ApiError) as error:
+            if isinstance(error, ApiError) and error.status not in (429, 500, 502, 503, 504):
+                raise
+            if time.monotonic() >= deadline:
+                raise SystemExit("Polling deadline reached during network errors; run status unknown")
+            print("Transient API read failure; retrying the same run in 15 seconds", flush=True)
+            time.sleep(15)
+            continue
         if detail.get("state") != previous_state:
             previous_state = detail.get("state")
             print(f"run {args.run_id}: {previous_state}", flush=True)

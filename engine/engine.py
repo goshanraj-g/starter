@@ -5,6 +5,7 @@ from transformers import AutoModelForCausalLM, DynamicCache
 
 from kernels.cache import PrefixCache
 from kernels.decode_graph import DecodeGraph
+from kernels.rmsnorm import FusedRMSNorm
 
 
 @torch.inference_mode()
@@ -60,6 +61,13 @@ class Engine:
             .eval()
             .to("cuda:0")
         )
+        base = self.model.model
+        base.norm = FusedRMSNorm(base.norm)
+        for layer in base.layers:
+            layer.input_layernorm = FusedRMSNorm(layer.input_layernorm)
+            layer.post_attention_layernorm = FusedRMSNorm(layer.post_attention_layernorm)
+            layer.self_attn.q_norm = FusedRMSNorm(layer.self_attn.q_norm)
+            layer.self_attn.k_norm = FusedRMSNorm(layer.self_attn.k_norm)
         self.cache = None
         self.cache_shape = None
         self.decoder = None

@@ -81,10 +81,24 @@
   the initialized-prefix view and explicit mask. No CUDA graphs or fused ops
   added yet, to isolate the prefill change.
 - Prefill-correction commit: `95b0bcd457333ff8d82fb616d53c78ce60ef7ba2`.
-- Run: `235eeb2c-8c59-46a6-9d64-1256c79430ca`; report pending.
+- Run: `235eeb2c-8c59-46a6-9d64-1256c79430ca`; passed and ranked at
+  **118.5926 tokens/s**. Raw report: `agent/results/stage1_prefill.json`.
+- TTFT/native: 1.034 / 1.010 / 1.006; TPOT/native: 1.062 / 1.006 / 1.059.
+  This fixed prefill latency but did not demonstrate a decode speedup.
+- Native TPOT in this run was 36.8–39.9 ms versus 17.4–22.5 ms in the
+  previous run. Compare paired ratios; the raw score drop alone cannot be
+  attributed to the code. Peak memory: 17,051,484,160 bytes.
 
 ## Stage 2 — CUDA graph decode
 
+- Commit: `68c91155964d4ceba602cfc6e7ca60709e5c3ba9`.
+- Submission: `56d521b8-5821-4b61-8a24-b693bde39def`.
+- Run: `e25b30d7-452f-4349-b564-183b3c4f3ab4`; failed latency gate.
+- Raw report: `agent/results/stage2_graph.json`. Public correctness passed.
+- Public 0/1/2 throughput: 95.2 / 168.6 / 777.7 tokens/s.
+- TPOT/native: **0.38 / 0.62 / 0.68**, demonstrating decode improvement.
+- TTFT/native: **1.20** / 1.02 / 1.01. Public-0 first-token latency failed;
+  graph capture alone does not reduce eager prefill work. No eligible score.
 - Reviewed the [PyTorch 2.5.1 graph implementation](https://raw.githubusercontent.com/pytorch/pytorch/v2.5.1/torch/cuda/graphs.py)
   for explicit capture streams, warmup, replay, and buffer lifetime.
 - Added a fixed-capacity decode cache with GPU `index_copy_`, a GPU absolute
@@ -101,6 +115,17 @@
 - Research follow-on: [Flash-Decoding](https://pytorch.org/blog/flash-decoding/)
   parallelizes attention over KV sequence partitions and combines normalized
   partial results using log-sum-exp. Consider only after measuring graph decode.
+
+## Stage 3 — fused normalization
+
+- Reinstated the provided Triton RMSNorm implementation as an imported module.
+- Replaces hidden, per-head Q/K, and final norms; weights and epsilon are reused.
+- Preserves FP32 reduction/normalization followed by BF16 cast before multiplying
+  by the learned weight. No rotary, residual, attention, or MLP formula changes.
+- Applies to prefill and captured decode, targeting the first-token regression
+  as well as repeated GPU operations within the graph.
+- Archive lint passes. Numerical validation remains remote; the local harness
+  compares against a separate untouched baseline model when H100 access exists.
 
 ## Live workflow supersedes the repository's older run instructions
 
