@@ -1,9 +1,10 @@
-"""Stage one: native Qwen layers with wrapper bypass and fixed KV storage."""
+"""Native causal prefill and a CUDA-graph single-token decode loop."""
 
 import torch
 from transformers import AutoModelForCausalLM, DynamicCache
 
 from kernels.cache import PrefixCache
+from kernels.decode_graph import DecodeGraph
 
 
 @torch.inference_mode()
@@ -61,6 +62,7 @@ class Engine:
         )
         self.cache = None
         self.cache_shape = None
+        self.decoder = None
 
     def generate(self, input_ids: list[list[int]], max_new_tokens: int):
         """Greedy continuation of every sequence, one step at a time.
@@ -77,6 +79,7 @@ class Engine:
             shape = (batch, prompt_length + max_new_tokens)
             if shape != self.cache_shape:
                 # Release an old shape before allocating its replacement.
+                self.decoder = None
                 self.cache = None
                 self.cache = PrefixCache(
                     self.model.config, batch, shape[1], current.device,
@@ -84,7 +87,15 @@ class Engine:
                 )
                 self.cache_shape = shape
             self.cache.reset()
-            for _ in range(max_new_tokens):
-                logits = qwen_forward(self.model, current, self.cache)
-                current = logits[:, -1, :].argmax(dim=-1, keepdim=True)
-                yield current[:, 0].tolist()
+            logits = qwen_forward(self.model, current, self.cache)
+            current = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+            yield current[:, 0].tolist()
+            if max_new_tokens == 1:
+                return
+            if self.decoder is None:
+                # Each workload supplies an untimed warmup of the same shape.
+                self.decoder = DecodeGraph(self.model, self.cache, current, prompt_length)
+            self.decoder.reset(current, prompt_length)
+            for _ in range(max_new_tokens - 1):
+                self.decoder.graph.replay()
+                yield self.decoder.tokens[:, 0].tolist()

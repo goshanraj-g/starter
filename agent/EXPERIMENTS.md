@@ -80,6 +80,27 @@
   then copies its KV tensors into preallocated storage. Cached forwards retain
   the initialized-prefix view and explicit mask. No CUDA graphs or fused ops
   added yet, to isolate the prefill change.
+- Prefill-correction commit: `95b0bcd457333ff8d82fb616d53c78ce60ef7ba2`.
+- Run: `235eeb2c-8c59-46a6-9d64-1256c79430ca`; report pending.
+
+## Stage 2 — CUDA graph decode
+
+- Reviewed the [PyTorch 2.5.1 graph implementation](https://raw.githubusercontent.com/pytorch/pytorch/v2.5.1/torch/cuda/graphs.py)
+  for explicit capture streams, warmup, replay, and buffer lifetime.
+- Added a fixed-capacity decode cache with GPU `index_copy_`, a GPU absolute
+  position, and a boolean valid-prefix mask. Unused storage is initialized to
+  zero once to avoid NaNs in masked value lanes.
+- Captures the complete native single-token forward, argmax, next-token update,
+  and position increment. Three side-stream warmup steps precede capture.
+- Every generation resets input IDs/position and overwrites prompt cache slots.
+  Host token conversion and per-step yield remain outside the graph.
+- Graph capture is per storage shape during the first warmup generation;
+  subsequent same-shape prompts replay without capture or recompilation.
+- Native causal prefill remains unchanged from the isolated prefill correction.
+- Archive lint and Python 3.11 parsing pass. GPU validation remains remote.
+- Research follow-on: [Flash-Decoding](https://pytorch.org/blog/flash-decoding/)
+  parallelizes attention over KV sequence partitions and combines normalized
+  partial results using log-sum-exp. Consider only after measuring graph decode.
 
 ## Live workflow supersedes the repository's older run instructions
 

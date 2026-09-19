@@ -1,7 +1,6 @@
-"""Fixed storage with a growing, initialized prefix for eager Qwen attention.
+"""Shared KV storage; eager updates expose only the initialized prefix.
 
-This is deliberately not the graph-capable cache: its returned views grow.
-The caller advances length once, after all layers have written their slots.
+GraphCache uses these same buffers at full capacity with an explicit mask.
 """
 
 import torch
@@ -11,10 +10,12 @@ class PrefixCache:
     def __init__(self, config, batch, capacity, device, dtype):
         shape = (batch, config.num_key_value_heads, capacity, config.head_dim)
         self.keys = [
-            torch.empty(shape, device=device, dtype=dtype)
+            torch.zeros(shape, device=device, dtype=dtype)
             for _ in range(config.num_hidden_layers)
         ]
-        self.values = [torch.empty_like(key) for key in self.keys]
+        # Masked values must be finite: an uninitialized NaN could contaminate
+        # attention even with a zero softmax weight. Zero once during allocation.
+        self.values = [torch.zeros_like(key) for key in self.keys]
         self.capacity = capacity
         self.length = 0
 

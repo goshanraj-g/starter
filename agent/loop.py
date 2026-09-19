@@ -64,3 +64,34 @@ def attempt(client: Dryft, engine_dir: Path, mode: str, timeout: float) -> bool:
 
 def plan_next_edit(history: list[dict]) -> str:
     raise NotImplementedError("this is the part you write")
+
+
+if __name__ == "__main__":
+    # Read-only monitor for the current repository-triggered official workflow.
+    import argparse
+    import json
+    import time
+    from client import TERMINAL
+
+    parser = argparse.ArgumentParser(description="Watch and record an existing Dryft run")
+    parser.add_argument("run_id")
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--timeout", type=float, default=1800)
+    args = parser.parse_args()
+    client = Dryft()
+    deadline = time.monotonic() + args.timeout
+    previous_state = None
+    while True:
+        detail = client.run(args.run_id)
+        if detail.get("state") != previous_state:
+            previous_state = detail.get("state")
+            print(f"run {args.run_id}: {previous_state}", flush=True)
+        if previous_state in TERMINAL:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(detail, indent=2) + "\n")
+            passed = report(detail)
+            print(f"Saved {args.output}", flush=True)
+            raise SystemExit(0 if passed else 1)
+        if time.monotonic() >= deadline:
+            raise SystemExit("Polling deadline reached; the run remains active")
+        time.sleep(15)
