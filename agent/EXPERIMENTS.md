@@ -403,6 +403,16 @@ validation here does not establish numerical correctness.
 
 ## Stage 14 — CUDA graph prefill
 
+- Commit: `571f9dd4c2122176ccd121ed3256e190c0357894`.
+- Submission: `8ec161e2-1c2e-452d-91e8-919a307f40de`.
+- Run: `f58724d0-7750-45a3-8be5-cc0ec25ea156`; **passed all gates, 811.9 tokens/s**.
+- Raw report: `agent/results/stage14_prefill_graph.json`.
+- Public throughput: 213.5 / 411.3 / 2553.9 tokens/s.
+- TTFT/native: 0.34 / 0.74 / 0.73; TPOT/native: 0.11 / 0.12 / 0.13.
+- Peak memory: 16.36 GB. Public batch-1 TTFT fell from 23.1 to 15.9 ms;
+  larger-batch prefill and overall hidden throughput were effectively unchanged.
+- Retain graph prefill for its small-batch latency benefit and persistent buffers.
+
 - Capture fixed-shape prefill, final norm/head, and greedy argmax with persistent
   input and token buffers. Warm native/Triton paths on the capture stream first.
 - Replays overwrite the full prompt prefix; shape changes release both prefill
@@ -414,3 +424,16 @@ validation here does not establish numerical correctness.
   reverted. No prefill arithmetic or projection reformulation is included.
 - CLI archive validation and three local tests pass; submit this graph-only
   prefill optimization against the stable stage 11a base.
+
+
+## Stage 15 — measured column-major BF16 decode weights
+
+- Compare native row-major weights with a column-major BF16 copy for each
+  decode projection category. Values and formula stay unchanged; prefill
+  retains original weights and layout.
+- Profile all layer weights during warmup, compare outputs against native,
+  and retain alternate storage only when it wins by at least 5%.
+- Bound baseline peak plus retained/candidate copies to 85% of device memory,
+  leaving room beneath the 90% gate for graph buffers.
+- CLI archive validation and three local tests pass. Submitting after stage 14
+  passed; H100 numerics and timing remain remote-only checks.

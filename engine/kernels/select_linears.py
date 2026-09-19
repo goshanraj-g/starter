@@ -36,6 +36,10 @@ def graph_time(operation, x, weights):
     return statistics.median(times)
 
 
+def column_linear(x, weight, layouts):
+    return native_linear(x, layouts[weight.data_ptr()])
+
+
 @torch.inference_mode()
 def select_linears(model, batch):
     layers = model.model.layers
@@ -49,12 +53,27 @@ def select_linears(model, batch):
     if batch > 32:
         return {name: native_linear for name in categories}
     selected = {}
+    base_peak = torch.cuda.max_memory_allocated()
+    retained = 0
+    limit = int(torch.cuda.get_device_properties(0).total_memory * 0.85)
     for name, weights in categories.items():
         x = torch.randn((batch, 1, weights[0].shape[1]),
                         dtype=weights[0].dtype, device=weights[0].device)
         best = native_linear
         reference = native_linear(x, weights[0])
         best_ms = graph_time(best, x, weights)
+        native_ms = best_ms
+        column_candidate = None
+        extra_bytes = sum(weight.numel() * weight.element_size() for weight in weights)
+        if base_peak + retained + extra_bytes < limit:
+            layouts = {weight.data_ptr(): weight.t().contiguous().t() for weight in weights}
+            column_candidate = partial(column_linear, layouts=layouts)
+            actual = column_candidate(x, weights[0])
+            if torch.allclose(actual, reference, rtol=0.016, atol=0.002):
+                elapsed = graph_time(column_candidate, x, weights)
+                if elapsed < best_ms:
+                    best, best_ms = column_candidate, elapsed
+            del layouts, actual
         for split in ((1,) if name == "head" else (2, 4, 8)):
             candidate = partial(triton_linear, split=split)
             result = candidate(x, weights[0])
@@ -63,7 +82,10 @@ def select_linears(model, batch):
             if not torch.allclose(result, reference, rtol=0.016, atol=0.002):
                 continue
             elapsed = graph_time(candidate, x, weights)
-            if elapsed < best_ms * 0.90:
+            if elapsed < best_ms:
                 best, best_ms = candidate, elapsed
-        selected[name] = best
+        selected[name] = best if best_ms < native_ms * 0.95 else native_linear
+        if selected[name] is column_candidate:
+            retained += extra_bytes
+        del column_candidate
     return selected
