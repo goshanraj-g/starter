@@ -7,6 +7,7 @@ their contents change between replays. Host conversion is the caller's job.
 import torch
 from kernels.qkv_epilogue import qkv_epilogue
 from kernels.select_linears import select_linears
+from kernels.pointwise import residual_norm, swiglu
 
 
 class GraphCache:
@@ -81,9 +82,9 @@ class DecodeGraph:
         position_ids = self.position.unsqueeze(0)
         position_embeddings = base.rotary_emb(x, position_ids)
         batch = self.tokens.shape[0]
+        n = base.layers[0].input_layernorm(x)
         for layer_idx, layer in enumerate(base.layers):
             attn = layer.self_attn
-            n = layer.input_layernorm(x)
             q = qkv_epilogue(
                 self.linears["qkv"](n, attn.qkv_weight), attn, position_embeddings,
                 self.position, self.cache.flat_keys[layer_idx],
@@ -101,13 +102,18 @@ class DecodeGraph:
                 1, self.capacity, 0.0, False, False,
                 scale=attn.scaling, seqused_k=self.valid_lengths,
             )[0]
-            x = x + self.linears["o"](a.reshape(batch, 1, -1), attn.o_proj.weight)
+            x, n = residual_norm(
+                x, self.linears["o"](a.reshape(batch, 1, -1), attn.o_proj.weight),
+                layer.post_attention_layernorm,
+            )
             mlp = layer.mlp
-            gate, up = self.linears["gate_up"](
-                layer.post_attention_layernorm(x), mlp.gate_up_weight,
-            ).chunk(2, dim=-1)
-            x = x + self.linears["down"](mlp.act_fn(gate) * up, mlp.down_proj.weight)
-        logits = self.linears["head"](base.norm(x), self.model.lm_head.weight)
+            activated = swiglu(self.linears["gate_up"](n, mlp.gate_up_weight))
+            next_norm = (base.layers[layer_idx + 1].input_layernorm
+                         if layer_idx + 1 < len(base.layers) else base.norm)
+            x, n = residual_norm(
+                x, self.linears["down"](activated, mlp.down_proj.weight), next_norm,
+            )
+        logits = self.linears["head"](n, self.model.lm_head.weight)
         self.tokens.copy_(logits[:, -1, :].argmax(dim=-1, keepdim=True))
         self.position.add_(1)
         self.valid_lengths.add_(1)

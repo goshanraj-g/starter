@@ -267,7 +267,7 @@ validation here does not establish numerical correctness.
 - CLI static validation passes. Stage 7 passed; submit the isolated matrix candidate next.
 
 
-## Prepared follow-up — residual/RMSNorm and SwiGLU fusion
+## Stage 11 — residual/RMSNorm and SwiGLU fusion
 
 - Residual addition rounds to BF16 before norm statistics; FP32 normalization
   rounds to BF16 before learned gain, then BF16 output as in the reference.
@@ -277,7 +277,7 @@ validation here does not establish numerical correctness.
   PyTorch's formula. SiLU rounds to BF16 before multiplication by up.
 - Checked libdevice APIs against
   [Triton 3.1.0](https://raw.githubusercontent.com/triton-lang/triton/v3.1.0/python/triton/language/extra/cuda/libdevice.py).
-- Static archive validation passed; retained outside engine as a later candidate.
+- Prepared on top of grouped replay; CLI archive validation passes. Stage 10 passed; submit this isolated fusion next.
 
 
 ## Stage 9 — overlap GPU decode with token handoff
@@ -303,6 +303,14 @@ validation here does not establish numerical correctness.
 
 
 ## Stage 10 — grouped graph replay and host copies
+
+- Commit: `ec87da983b4e10532132b7d1c7086f856a633098`.
+- Submission: `ca987d41-e5be-4d2b-a0ed-29c6d3b351f0`.
+- Run: `5493822d-88a3-4e02-b2b1-35714d62089e`; **passed every gate at
+  787.3 tokens/s**, +1.5% versus stage 9.
+- Raw report: `agent/results/stage10_grouped.json`.
+- Public throughput: 199.1 / 403.3 / 2471.6 tokens/s.
+- TTFT/native: 0.78 / 0.75 / 0.73; TPOT/native: 0.15 / 0.18 / 0.18.
 
 - Capture up to eight sequential, exact single-token decode steps per graph,
   recording each token to a persistent [group,B] int64 output buffer.
