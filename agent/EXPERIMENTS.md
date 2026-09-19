@@ -229,6 +229,14 @@ validation here does not establish numerical correctness.
 
 ## Stage 7 — native grouped-query causal prefill
 
+- Commit: `6c2c306c7599926c926e6ca3a8180c5ba4fa19fd`.
+- Submission: `be0f94e3-e784-4102-b53b-bd2b3f022d02`.
+- Run: `5620f648-e7e5-4b94-ba60-5bd98dfa0e30`; **passed every gate at
+  747.8 tokens/s**, +1.0% versus stage 6.
+- Raw report: `agent/results/stage7_prefill.json`.
+- Public throughput: 192.6 / 393.6 / 2364.4 tokens/s.
+- TTFT/native: 0.80 / 0.74 / 0.72; TPOT/native: 0.21 / 0.23 / 0.24.
+
 - Calls pinned native dense FlashAttention with original Q/K/V projections,
   Q/K norms, and rotary. Preserves B,T,H,D strides and all initialized prompt
   keys; is_causal=True is valid because prompt positions start at zero.
@@ -236,3 +244,16 @@ validation here does not establish numerical correctness.
   duplicate DynamicCache and end-of-prefill copy loop.
 - Applies final RMSNorm only to the last token, an independent row operation.
 - CLI static validation passes; stage 6 passed; submitting prefill next.
+
+
+## Stage 8 — measured small-batch BF16 split-K matrix products
+
+- BF16 inputs/weights, FP32 tensor-core accumulation, FP32 partials and
+  reduction, then a single BF16 output cast. No quantization or atomics.
+- During warmup, compare one candidate output per operation against native,
+  then GPU-time graph replays over all 36 distinct layer weights to avoid
+  tuning only L2-resident microbenchmarks. Try 2/4/8 splits; LM head uses 1.
+- Select Triton only with at least 10% measured improvement; otherwise retain
+  cuBLAS. Batches above 32 retain native GEMM. Selection is fixed before the
+  decode graph is captured; no tuning or CPU decisions during measured steps.
+- CLI static validation passes. Stage 7 passed; submit the isolated matrix candidate next.

@@ -5,8 +5,8 @@ their contents change between replays. Host conversion is the caller's job.
 """
 
 import torch
-from torch.nn.functional import linear
 from kernels.qkv_epilogue import qkv_epilogue
+from kernels.select_linears import select_linears
 
 
 class GraphCache:
@@ -38,6 +38,7 @@ class DecodeGraph:
         self.cu_key = self.cu_query * storage.capacity
         self.valid_lengths = torch.empty(batch, dtype=torch.int32, device=first_token.device)
         self.cache = GraphCache(storage, self.position)
+        self.linears = select_linears(model, batch)
         self.graph = torch.cuda.CUDAGraph()
         stream = torch.cuda.Stream()
         current_stream = torch.cuda.current_stream()
@@ -71,7 +72,7 @@ class DecodeGraph:
             attn = layer.self_attn
             n = layer.input_layernorm(x)
             q = qkv_epilogue(
-                linear(n, attn.qkv_weight), attn, position_embeddings,
+                self.linears["qkv"](n, attn.qkv_weight), attn, position_embeddings,
                 self.position, self.cache.flat_keys[layer_idx],
                 self.cache.flat_values[layer_idx], self.capacity,
             )
@@ -87,13 +88,13 @@ class DecodeGraph:
                 1, self.capacity, 0.0, False, False,
                 scale=attn.scaling, seqused_k=self.valid_lengths,
             )[0]
-            x = x + attn.o_proj(a.reshape(batch, 1, -1))
+            x = x + self.linears["o"](a.reshape(batch, 1, -1), attn.o_proj.weight)
             mlp = layer.mlp
-            gate, up = linear(
+            gate, up = self.linears["gate_up"](
                 layer.post_attention_layernorm(x), mlp.gate_up_weight,
             ).chunk(2, dim=-1)
-            x = x + mlp.down_proj(mlp.act_fn(gate) * up)
-        logits = self.model.lm_head(base.norm(x))
+            x = x + self.linears["down"](mlp.act_fn(gate) * up, mlp.down_proj.weight)
+        logits = self.linears["head"](base.norm(x), self.model.lm_head.weight)
         self.tokens.copy_(logits[:, -1, :].argmax(dim=-1, keepdim=True))
         self.position.add_(1)
         self.valid_lengths.add_(1)
