@@ -204,6 +204,14 @@ validation here does not establish numerical correctness.
 
 ## Stage 6 — fused Q/K normalization, rotary, and KV write
 
+- Commit: `333ec9cceb943635ae5d2d93bcfdb1f70aa42ab0`.
+- Submission: `b933a32b-d362-411b-b526-30dcddefe214`.
+- Run: `bba74193-6619-474c-8a6b-817223376245`; **passed every gate at
+  740.3 tokens/s**, +21.4% versus stage 5.
+- Raw report: `agent/results/stage6_qkv.json`.
+- Public throughput: 192.6 / 379.9 / 2330.0 tokens/s.
+- TTFT/native: 0.93 / 0.81 / 0.80; TPOT/native: 0.22 / 0.24 / 0.25.
+
 - One Triton launch replaces two per-head norms, native rotary elementwise
   operations, layout copies, and two cache writes for each decode layer.
 - Inputs remain packed BF16 QKV; output Q is contiguous [B,32,128]. K/V write
@@ -217,3 +225,14 @@ validation here does not establish numerical correctness.
   those measurements cannot currently be inspected. Do not ship unused logging.
 - CLI static validation and Python 3.11 syntax pass. Not submitted; awaiting
   stage 6 remote measurement.
+
+
+## Stage 7 — native grouped-query causal prefill
+
+- Calls pinned native dense FlashAttention with original Q/K/V projections,
+  Q/K norms, and rotary. Preserves B,T,H,D strides and all initialized prompt
+  keys; is_causal=True is valid because prompt positions start at zero.
+- Writes each layer into persistent KV storage immediately, eliminating the
+  duplicate DynamicCache and end-of-prefill copy loop.
+- Applies final RMSNorm only to the last token, an independent row operation.
+- CLI static validation passes; stage 6 passed; submitting prefill next.

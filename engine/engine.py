@@ -1,16 +1,19 @@
 """Native causal prefill and a CUDA-graph single-token decode loop."""
 
 import torch
-from transformers import AutoModelForCausalLM, DynamicCache
+from transformers import AutoModelForCausalLM
 
 from kernels.cache import PrefixCache
 from kernels.decode_graph import DecodeGraph
 from kernels.rmsnorm import FusedRMSNorm
 from kernels.projections import pack_projections
+from kernels.prefill import prefill
 
 
 @torch.inference_mode()
 def qwen_forward(model, input_ids, cache):
+    if cache.length == 0:
+        return prefill(model, input_ids, cache)
     base = model.model
     x = base.embed_tokens(input_ids)
     length = input_ids.shape[1]
@@ -18,30 +21,20 @@ def qwen_forward(model, input_ids, cache):
     positions = torch.arange(cache.length, end, device=input_ids.device)
     position_ids = positions.unsqueeze(0)
     position_embeddings = base.rotary_emb(x, position_ids)
-    if cache.length == 0:
-        # Native empty-cache causal prefill keeps SDPA's fast causal dispatch.
-        # An explicit prefill mask caused a measured 1.28x TTFT regression.
-        active_cache = DynamicCache()
-        attention_mask = None
-    else:
-        active_cache = cache
-        # Boolean SDPA masks use True for visible keys. The static storage
-        # exposes only initialized prefixes, including an offset multi-token call.
-        keys = torch.arange(end, device=input_ids.device)
-        attention_mask = keys[None, None, None, :] <= positions[None, None, :, None]
+    # Offset/multi-token calls remain supported by the verification helper.
+    # Boolean SDPA masks use True for visible, initialized prefix slots.
+    keys = torch.arange(end, device=input_ids.device)
+    attention_mask = keys[None, None, None, :] <= positions[None, None, :, None]
     for layer in base.layers:
         x = layer(
             x,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            past_key_value=active_cache,
+            past_key_value=cache,
             use_cache=True,
             cache_position=positions,
             position_embeddings=position_embeddings,
         )[0]
-    if active_cache is not cache:
-        for layer_idx, (key, value) in enumerate(zip(active_cache.key_cache, active_cache.value_cache)):
-            cache.update(key, value, layer_idx)
     cache.length = end
     x = base.norm(x)
     return model.lm_head(x[:, -1:, :])
