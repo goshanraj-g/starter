@@ -40,6 +40,17 @@ def qwen_forward(model, input_ids, cache):
     return model.lm_head(x[:, -1:, :])
 
 
+def stream_decode(decoder, first, max_new_tokens):
+    """Overlap token handoff with the next step; leave no final GPU work."""
+    decoder.graph.replay()
+    yield first
+    for step in range(1, max_new_tokens):
+        tokens = decoder.tokens[:, 0].tolist()
+        if step + 1 < max_new_tokens:
+            decoder.graph.replay()
+        yield tokens
+
+
 class Engine:
     def __init__(self, model_path: str) -> None:
         """Load the pinned checkpoint from model_path. Untimed, budgeted."""
@@ -92,13 +103,14 @@ class Engine:
             self.cache.reset()
             logits = qwen_forward(self.model, current, self.cache)
             current = logits[:, -1, :].argmax(dim=-1, keepdim=True)
-            yield current[:, 0].tolist()
+            first = current[:, 0].tolist()
             if max_new_tokens == 1:
+                yield first
                 return
             if self.decoder is None:
                 # Each workload supplies an untimed warmup of the same shape.
                 self.decoder = DecodeGraph(self.model, self.cache, current, prompt_length)
             self.decoder.reset(current, prompt_length)
-            for _ in range(max_new_tokens - 1):
-                self.decoder.graph.replay()
-                yield self.decoder.tokens[:, 0].tolist()
+            # After copying a token to the host, start the next GPU step before
+            # yielding. The harness can write the host list while decode runs.
+            yield from stream_decode(self.decoder, first, max_new_tokens)

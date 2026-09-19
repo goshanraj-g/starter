@@ -248,6 +248,14 @@ validation here does not establish numerical correctness.
 
 ## Stage 8 — measured small-batch BF16 split-K matrix products
 
+- Commit: `4683b480945e1c245eb270a4c1d4c1e9bd7576fc`.
+- Submission: `fbfdeee4-acd0-4666-b078-5119d68b3f16`.
+- Run: `a52915a2-cce9-4ec8-bb78-4f1fb496075f`; **passed all gates at
+  753.6 tokens/s**, +0.8% versus stage 7.
+- Raw report: `agent/results/stage8_linear.json`.
+- Public throughput: 193.5 / 398.1 / 2387.6 tokens/s.
+- TTFT/native: 0.74 / 0.74 / 0.73; TPOT/native: 0.18 / 0.20 / 0.21.
+
 - BF16 inputs/weights, FP32 tensor-core accumulation, FP32 partials and
   reduction, then a single BF16 output cast. No quantization or atomics.
 - During warmup, compare one candidate output per operation against native,
@@ -257,3 +265,30 @@ validation here does not establish numerical correctness.
   cuBLAS. Batches above 32 retain native GEMM. Selection is fixed before the
   decode graph is captured; no tuning or CPU decisions during measured steps.
 - CLI static validation passes. Stage 7 passed; submit the isolated matrix candidate next.
+
+
+## Prepared follow-up — residual/RMSNorm and SwiGLU fusion
+
+- Residual addition rounds to BF16 before norm statistics; FP32 normalization
+  rounds to BF16 before learned gain, then BF16 output as in the reference.
+- Carries the next layer's normalized input directly; final layer uses final
+  model RMSNorm. Both residual branches remain in their original order.
+- SwiGLU uses CUDA libdevice expf and round-to-nearest division, matching
+  PyTorch's formula. SiLU rounds to BF16 before multiplication by up.
+- Checked libdevice APIs against
+  [Triton 3.1.0](https://raw.githubusercontent.com/triton-lang/triton/v3.1.0/python/triton/language/extra/cuda/libdevice.py).
+- Static archive validation passed; retained outside engine as a later candidate.
+
+
+## Stage 9 — overlap GPU decode with token handoff
+
+- Copy the current token IDs to an owned host list, enqueue the next graph
+  replay, then yield the host list. The harness can write the current output
+  while the GPU decodes the following token. No math or kernel changes.
+- Exactly output_length-1 graph replays; the final host copy waits for the last
+  replay, so there is no outstanding generation work after the final yield.
+- First-call graph capture stays in the platform's untimed warmup. Subsequent
+  first-token handoffs add only an asynchronous launch, never a decode wait.
+- A local control-flow test covers batch 1/4/16, output 2/32/128, immutable host
+  snapshots, and exact replay counts. All three local tests pass.
+- Stage 8 passed; submit this isolated scheduling change next.
