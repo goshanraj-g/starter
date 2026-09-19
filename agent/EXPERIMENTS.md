@@ -379,6 +379,18 @@ validation here does not establish numerical correctness.
 
 ## Stage 13 — packed QKV and fused normalization/rotary for prefill
 
+- Commit: `c3d11bcc2ddc9cbda787f3175abb1faab160b89b`.
+- Submission: `5ef1b230-455c-4410-847e-b11d8b7a7e21`.
+- Run: `8f71648b-6eff-42f2-aaea-969d539940b6`; **failed incorrect_output**
+  on a hidden case. Reverted entirely.
+- Raw report: `agent/results/stage13_prefill_fused.json`. Public correctness
+  passed, but that does not establish hidden correctness.
+- Public throughput: 218.3 / 450.9 / 2672.9 tokens/s.
+- TTFT/native: 0.53 / 0.63 / 0.61; TPOT/native: 0.14 / 0.16 / 0.17.
+- Logs suppress hidden-workload details, so they do not identify the bad
+  position. Packed prefill projection and extended fusion were changed
+  together; neither is retained without a separate numerical verification.
+
 - Extends the tested Q/K epilogue over [B,T] rows. COS/SIN index prompt token
   positions; K/V writes token-major cache positions 0..T-1. Decode retains
   device-side absolute positions for T=1.
@@ -387,3 +399,18 @@ validation here does not establish numerical correctness.
 - Native causal GQA FlashAttention reads the initialized prefix views directly.
   The FP32/BF16 cast boundaries remain identical to the tested decode kernel.
 - Static archive checks pass. Stage 12 measured and reverted; submit prefill fusion next.
+
+
+## Stage 14 — CUDA graph prefill
+
+- Capture fixed-shape prefill, final norm/head, and greedy argmax with persistent
+  input and token buffers. Warm native/Triton paths on the capture stream first.
+- Replays overwrite the full prompt prefix; shape changes release both prefill
+  and decode graphs before reallocating cache. Copy current prompt IDs in place.
+- Prefill graph pools keep their allocations alive, eliminating the cold eager
+  allocator risk. Remove the now-unneeded repeated eager prefill warmup.
+- First token is still handed off before waiting for any decode group.
+- Uses the previously passing native GQA prefill path; stage 13 fusion is
+  reverted. No prefill arithmetic or projection reformulation is included.
+- CLI archive validation and three local tests pass; submit this graph-only
+  prefill optimization against the stable stage 11a base.

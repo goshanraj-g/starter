@@ -8,6 +8,7 @@ from kernels.decode_graph import DecodeGraph
 from kernels.rmsnorm import FusedRMSNorm
 from kernels.projections import pack_projections
 from kernels.prefill import prefill
+from kernels.prefill_graph import PrefillGraph
 
 
 @torch.inference_mode()
@@ -81,6 +82,7 @@ class Engine:
         self.cache = None
         self.cache_shape = None
         self.decoder = None
+        self.prefiller = None
 
     def generate(self, input_ids: list[list[int]], max_new_tokens: int):
         """Greedy continuation of every sequence, one step at a time.
@@ -98,6 +100,7 @@ class Engine:
             if shape != self.cache_shape:
                 # Release an old shape before allocating its replacement.
                 self.decoder = None
+                self.prefiller = None
                 self.cache = None
                 self.cache = PrefixCache(
                     self.model.config, batch, shape[1], current.device,
@@ -105,8 +108,9 @@ class Engine:
                 )
                 self.cache_shape = shape
             self.cache.reset()
-            logits = qwen_forward(self.model, current, self.cache)
-            current = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+            if self.prefiller is None:
+                self.prefiller = PrefillGraph(self.model, self.cache, current)
+            current = self.prefiller.run(current)
             first = current[:, 0].tolist()
             if max_new_tokens == 1:
                 yield first
@@ -116,14 +120,6 @@ class Engine:
                 self.decoder = DecodeGraph(
                     self.model, self.cache, current, prompt_length, max_new_tokens - 1,
                 )
-                # torch.cuda.graph clears allocator caches on entry. Capture
-                # happens after prefill, so prime its allocations again during
-                # this untimed warmup instead of leaving a cold first sample.
-                self.cache.reset()
-                prompt = torch.tensor(input_ids, dtype=torch.int64, device="cuda:0")
-                logits = qwen_forward(self.model, prompt, self.cache)
-                current = logits[:, -1, :].argmax(dim=-1, keepdim=True)
-                first = current[:, 0].tolist()
             self.decoder.reset(current, prompt_length)
             # After copying a token to the host, start the next GPU step before
             # yielding. The harness can write the host list while decode runs.
