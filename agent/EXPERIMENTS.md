@@ -428,6 +428,14 @@ validation here does not establish numerical correctness.
 
 ## Stage 15 — measured column-major BF16 decode weights
 
+- Commit: `e58c8ad1c1ad3964ea5d7521ba4c196c5a9d6545`.
+- Submission: `f3df10a9-93fa-4b64-9807-93b60314dd05`.
+- Run: `92fada53-4134-4bd5-869e-e91f2870af3f`; **passed all gates, 819.3 tokens/s**.
+- Raw report: `agent/results/stage15_layouts.json`.
+- Public throughput: 224.1 / 414.7 / 2550.2 tokens/s.
+- TTFT/native: 0.57 / 0.74 / 0.72; TPOT/native: 0.19 / 0.22 / 0.22.
+- Peak memory: 16.52 GB. Retain the measured layout selection.
+
 - Compare native row-major weights with a column-major BF16 copy for each
   decode projection category. Values and formula stay unchanged; prefill
   retains original weights and layout.
@@ -437,3 +445,33 @@ validation here does not establish numerical correctness.
   leaving room beneath the 90% gate for graph buffers.
 - CLI archive validation and three local tests pass. Submitting after stage 14
   passed; H100 numerics and timing remain remote-only checks.
+
+
+## Stage 16 — measured full-prefix Triton decode attention
+
+- Compare native variable-length FlashAttention with two exact full-prefix
+  split-K candidates: scalar query-head reduction and grouped-query tensor cores.
+- BF16 Q/K/V, FP32 online softmax/accumulators, BF16 probability products,
+  FP32 partition combination, BF16 output. Query head h maps to KV head h//4.
+- Device-side valid lengths mask every load and score; no eviction or pruning.
+- Warmup checks short, middle and full prompt prefixes against native attention
+  on first/last layer caches. Profile all 36 cache layers, retain a candidate
+  only with a measured 10% advantage, then capture a fixed choice.
+- Stage 15 passed. Local syntax/archive checks pass but do not establish
+  numerical correctness or performance on H100.
+- Checked the online-softmax and probability-cast structure against Triton
+  3.1.0's official tutorial:
+  https://raw.githubusercontent.com/triton-lang/triton/v3.1.0/python/tutorials/06-fused-attention.py
+- Partition/reduction reference: https://pytorch.org/blog/flash-decoding/ .
+  This candidate uses BF16 rather than the tutorial's FP16; no FP8 path is used.
+
+
+## Prepared stage 17 — rotary-only prefill fusion
+
+- Keep separate native Q/K/V projections and the proven per-head norms.
+- Fuse only BF16 rotary products/addition and full-prefix K/V cache writes.
+- Eager warmup checks bitwise equality against native Q/K rotary and V cache
+  contents at every layer. Capture then performs no host-side checks.
+- No clear indexing bug was found in the failed stage 13 combined fusion;
+  its packed prefill projections and fused normalization remain reverted.
+- Source drafts stay under `agent/candidates/`; not imported or submitted yet.

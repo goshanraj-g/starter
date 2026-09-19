@@ -7,6 +7,7 @@ their contents change between replays. Host conversion is the caller's job.
 import torch
 from kernels.qkv_epilogue import qkv_epilogue
 from kernels.select_linears import select_linears
+from kernels.select_attention import select_attention
 from kernels.pointwise import residual_norm, swiglu
 
 
@@ -40,6 +41,11 @@ class DecodeGraph:
         self.valid_lengths = torch.empty(batch, dtype=torch.int32, device=first_token.device)
         self.cache = GraphCache(storage, self.position)
         self.linears = select_linears(model, batch)
+        self.attention = select_attention(
+            self.cache.flat_keys, self.cache.flat_values, self.cu_query,
+            self.cu_key, self.capacity, first_position,
+            model.model.layers[0].self_attn.scaling,
+        )
         self.chunk_size = min(8, decode_steps)
         self.output = torch.empty((self.chunk_size, batch), dtype=torch.int64,
                                   device=first_token.device)
@@ -90,18 +96,13 @@ class DecodeGraph:
                 self.position, self.cache.flat_keys[layer_idx],
                 self.cache.flat_values[layer_idx], self.capacity,
             )
-            # PyTorch 2.5.1's variable-length FlashAttention entry point accepts
-            # GQA directly. cu_key describes reserved batch segments; seqused_k
-            # limits each segment to the device-side initialized prefix. These
-            # int32 CUDA tensors keep the operator safe for graph replay.
-            a = torch.ops.aten._flash_attention_forward(
-                q,
-                self.cache.flat_keys[layer_idx],
-                self.cache.flat_values[layer_idx],
-                self.cu_query, self.cu_key,
-                1, self.capacity, 0.0, False, False,
-                scale=attn.scaling, seqused_k=self.valid_lengths,
-            )[0]
+            # Both native and Triton candidates read the entire device-side
+            # valid prefix. Selection and compilation happen only in warmup.
+            a = self.attention(
+                q, self.cache.flat_keys[layer_idx], self.cache.flat_values[layer_idx],
+                self.cu_query, self.cu_key, self.capacity, self.valid_lengths,
+                attn.scaling,
+            )
             x, n = residual_norm(
                 x, self.linears["o"](a.reshape(batch, 1, -1), attn.o_proj.weight),
                 layer.post_attention_layernorm,
