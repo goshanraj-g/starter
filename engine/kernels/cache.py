@@ -1,6 +1,7 @@
 """Shared KV storage; eager updates expose only the initialized prefix.
 
-GraphCache uses these same buffers at full capacity with an explicit mask.
+Logical views are [B, Hkv, capacity, D]. Physical storage is token-major so
+FlashAttention can view each batch's reserved segment without a layout copy.
 """
 
 import torch
@@ -8,14 +9,16 @@ import torch
 
 class PrefixCache:
     def __init__(self, config, batch, capacity, device, dtype):
-        shape = (batch, config.num_key_value_heads, capacity, config.head_dim)
-        self.keys = [
+        shape = (batch, capacity, config.num_key_value_heads, config.head_dim)
+        self.key_tokens = [
             torch.zeros(shape, device=device, dtype=dtype)
             for _ in range(config.num_hidden_layers)
         ]
         # Masked values must be finite: an uninitialized NaN could contaminate
         # attention even with a zero softmax weight. Zero once during allocation.
-        self.values = [torch.zeros_like(key) for key in self.keys]
+        self.value_tokens = [torch.zeros_like(key) for key in self.key_tokens]
+        self.keys = [key.transpose(1, 2) for key in self.key_tokens]
+        self.values = [value.transpose(1, 2) for value in self.value_tokens]
         self.capacity = capacity
         self.length = 0
 

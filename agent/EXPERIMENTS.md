@@ -118,6 +118,13 @@
 
 ## Stage 3 — fused normalization
 
+- Commit: `dd59b5504228982e5fff9a58746256c60c367b60`.
+- Submission: `850205e9-eaa2-442c-b63f-6127e98e61ff`.
+- Run: `fb1f2514-8559-479f-9b00-2645433864f3`; **passed and ranked at
+  339.7 tokens/s**, with all gates passed.
+- Raw report: `agent/results/stage3_norm.json`.
+- Public throughput: 120.9 / 197.6 / 905.9 tokens/s.
+- TTFT/native: 0.89 / 0.81 / 0.80; TPOT/native: 0.28 / 0.53 / 0.64.
 - Reinstated the provided Triton RMSNorm implementation as an imported module.
 - Replaces hidden, per-head Q/K, and final norms; weights and epsilon are reused.
 - Preserves FP32 reduction/normalization followed by BF16 cast before multiplying
@@ -126,6 +133,25 @@
   as well as repeated GPU operations within the graph.
 - Archive lint passes. Numerical validation remains remote; the local harness
   compares against a separate untouched baseline model when H100 access exists.
+
+## Next candidate — native variable-length grouped-query FlashAttention
+
+- Research found a suitable native operator already in the pinned runtime:
+  `aten._flash_attention_forward(..., seqused_k=...)`.
+- Checked its exact [2.5.1 schema](https://raw.githubusercontent.com/pytorch/pytorch/v2.5.1/aten/src/ATen/native/native_functions.yaml)
+  and [CUDA dispatch](https://raw.githubusercontent.com/pytorch/pytorch/v2.5.1/aten/src/ATen/native/transformers/cuda/attention.cu).
+- The [pinned FlashAttention implementation](https://raw.githubusercontent.com/pytorch/pytorch/v2.5.1/aten/src/ATen/native/transformers/cuda/flash_attn/flash_api.cpp)
+  verifies contiguous int32 CUDA cumulative offsets and valid lengths. For
+  one-query GQA it groups queries by KV head and enables split-K decoding.
+- Physical KV layout becomes [B, capacity, 8, 128], exposing the same logical
+  [B, 8, capacity, 128] views. Flattened token-major storage gives the operator
+  fixed reserved batch segments without a per-step transpose or KV repetition.
+- Query offsets are [0, 1, ..., B]; key offsets are [0, C, ..., B*C]. Separate
+  valid lengths start at prompt_length + 1 and advance on the GPU with position.
+- Direct decoder steps preserve native Q/K norms, rotary function, projections,
+  both BF16 residual additions, SwiGLU, and the tied LM head.
+- No custom attention math or newer-release API. Initial archive/syntax checks
+  pass. Normalization passed; submitting this attention change next.
 
 ## Live workflow supersedes the repository's older run instructions
 
