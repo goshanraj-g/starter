@@ -6,7 +6,7 @@ their contents change between replays. Host conversion is the caller's job.
 
 import torch
 from torch.nn.functional import linear
-from transformers.models.qwen3.modeling_qwen3 import apply_rotary_pos_emb
+from kernels.qkv_epilogue import qkv_epilogue
 
 
 class GraphCache:
@@ -70,23 +70,17 @@ class DecodeGraph:
         for layer_idx, layer in enumerate(base.layers):
             attn = layer.self_attn
             n = layer.input_layernorm(x)
-            head_shape = (batch, 1, -1, attn.head_dim)
-            q_width = attn.q_proj.out_features
-            kv_width = attn.k_proj.out_features
-            q, k, v = linear(n, attn.qkv_weight).split(
-                (q_width, kv_width, kv_width), dim=-1,
+            q = qkv_epilogue(
+                linear(n, attn.qkv_weight), attn, position_embeddings,
+                self.position, self.cache.flat_keys[layer_idx],
+                self.cache.flat_values[layer_idx], self.capacity,
             )
-            q = attn.q_norm(q.reshape(head_shape)).transpose(1, 2)
-            k = attn.k_norm(k.reshape(head_shape)).transpose(1, 2)
-            v = v.reshape(head_shape).transpose(1, 2)
-            q, k = apply_rotary_pos_emb(q, k, *position_embeddings)
-            self.cache.update(k, v, layer_idx)
             # PyTorch 2.5.1's variable-length FlashAttention entry point accepts
             # GQA directly. cu_key describes reserved batch segments; seqused_k
             # limits each segment to the device-side initialized prefix. These
             # int32 CUDA tensors keep the operator safe for graph replay.
             a = torch.ops.aten._flash_attention_forward(
-                q.squeeze(2),
+                q,
                 self.cache.flat_keys[layer_idx],
                 self.cache.flat_values[layer_idx],
                 self.cu_query, self.cu_key,

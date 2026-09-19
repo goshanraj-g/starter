@@ -180,6 +180,14 @@ validation here does not establish numerical correctness.
 
 ## Stage 5 — packed decode projections
 
+- Commit: `0ec1f0f249343f87cbc9c7b6d96e3802724f1e09`.
+- Submission: `70817beb-2d94-4dbb-962b-4017dc1578b3`.
+- Run: `afd4ffd8-a591-47b4-a06f-9ccde35ad67f`; **passed all gates at
+  609.7 tokens/s** (+1.5% versus stage 4).
+- Raw report: `agent/results/stage5_packed.json`.
+- Public throughput: 155.4 / 337.3 / 1919.1 tokens/s.
+- TTFT/native: 0.86 / 0.80 / 0.80; TPOT/native: 0.22 / 0.24 / 0.28.
+
 - Concatenate Q/K/V projection rows and gate/up projection rows once during
   model loading. Rebind native Linear weights to contiguous slices sharing the
   packed allocations, preserving prefill without duplicating model weights.
@@ -192,3 +200,20 @@ validation here does not establish numerical correctness.
   [SiLU kernel](https://raw.githubusercontent.com/pytorch/pytorch/v2.5.1/aten/src/ATen/native/cuda/ActivationSiluKernel.cu)
   computes x/(1+exp(-x)) in opmath precision and returns the input scalar dtype.
   Any SwiGLU fusion must round SiLU to BF16 before multiplying by up.
+
+
+## Stage 6 — fused Q/K normalization, rotary, and KV write
+
+- One Triton launch replaces two per-head norms, native rotary elementwise
+  operations, layout copies, and two cache writes for each decode layer.
+- Inputs remain packed BF16 QKV; output Q is contiguous [B,32,128]. K/V write
+  only the current absolute position in the token-major cache.
+- FP32 norm reduction; BF16 rounding after normalization, learned gain, each
+  cosine/sine product, and rotary sum. V is copied without normalization.
+- `enable_fp_fusion=False` is supported by the pinned
+  [Triton 3.1.0 backend](https://raw.githubusercontent.com/triton-lang/triton/v3.1.0/third_party/nvidia/backend/compiler.py).
+- Projection diagnostic remains outside engine: successful official-run logs
+  explicitly suppress candidate output once hidden workloads are touched, so
+  those measurements cannot currently be inspected. Do not ship unused logging.
+- CLI static validation and Python 3.11 syntax pass. Not submitted; awaiting
+  stage 6 remote measurement.
