@@ -516,6 +516,16 @@ validation here does not establish numerical correctness.
 
 ## Stage 19 — native BF16 matrix row padding
 
+- Commit: `dc526c6d6d99e8d64325d9752dca8cf442e01985`.
+- Submission: `b2c5d55b-9958-46eb-a468-885508ba1ebe`.
+- Run: `9b83d557-5e36-4319-9591-8596afc16f40`; **passed all gates, 879.8 tokens/s**.
+- Raw report: `agent/results/stage19_padding.json`.
+- Public throughput: 228.9 / 457.9 / 2615.6 tokens/s.
+- TTFT/native: 0.49 / 0.66 / 0.64; TPOT/native: 0.18 / 0.19 / 0.23.
+- Peak memory: 16.55 GB. **Reverted**: no established hidden-score gain.
+  Public batch 16 is unchanged by this candidate yet slowed, indicating
+  run-to-run variation; do not attribute the entire decline to padding.
+
 - Draft `agent/candidates/padded_linear.py` pads small decode matrices with
   zero rows, calls native BF16 linear, and returns only the real batch rows.
 - This changes native GEMM algorithm selection while preserving every real
@@ -525,7 +535,7 @@ validation here does not establish numerical correctness.
   reverting the stage 18 matrix-vector candidate.
 
 
-## Prepared stage 20 — attention partition/block tuning
+## Stage 20 — attention partition/block tuning
 
 - Stage 16 produced a real 6.5% hidden score gain, motivating two additional
   full-prefix grouped-query candidates: four partitions with 64-token blocks,
@@ -534,7 +544,8 @@ validation here does not establish numerical correctness.
   fewer partitions can reduce overhead at larger batches. Warmup measures
   both against the existing options and native attention.
 - Same numerical checks, FP32 reductions, BF16 probability boundaries and
-  10% native speed threshold. Drafts remain outside the engine.
+  10% native speed threshold. Archive validation passes; submitting after
+  reverting stage 19 to the verified stage 17 projection selector.
 
 
 ## Prepared stage 21 — prefill residual/norm and separate-input SwiGLU
@@ -557,4 +568,17 @@ validation here does not establish numerical correctness.
   selected GEMM plus SwiGLU remains the fallback; retain fusion only with
   at least a measured 2% category improvement and numerical checks passed.
 - Eliminates an intermediate BF16 tensor and one launch where selected.
+- Draft remains outside the engine until prior stages are measured.
+
+
+## Prepared stage 23 — verify matrix choices on full decode groups
+
+- Stage 18's isolated matrix timings did not improve its official hidden score.
+- Draft `agent/candidates/tune_decode.py` times complete reset-plus-decode
+  groups, with actual layer dependencies, cache traffic, and greedy outputs.
+- Try reverting each selected projection category to native linear; keep a
+  reversion only if the entire group is at least 2% faster and its warmup token
+  sequence is identical to the established path. No tuning occurs in samples.
+- A separately fused gate/up path retains its own selector. No measured prompt
+  determines the choice; all probes occur in the supplied untimed warmup.
 - Draft remains outside the engine until prior stages are measured.

@@ -51,7 +51,9 @@ def select_attention(keys, values, cu_query, cu_key, capacity, prompt_length, sc
     best = native_attention
     native_ms = measure(best, *args)
     best_ms = native_ms
-    candidates = [partial(attention, split=4), partial(attention_gqa, split=8)]
+    candidates = [partial(attention, split=4), partial(attention_gqa, split=8),
+                  partial(attention_gqa, split=4),
+                  partial(attention_gqa, split=16, block_n=32)]
     for operation in candidates:
         valid = True
         for length in sorted({1, max(1, prompt_length // 2), prompt_length}):

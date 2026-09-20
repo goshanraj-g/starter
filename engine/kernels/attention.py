@@ -107,14 +107,14 @@ def _partial_gqa(Q, K, V, LENGTH, PART, STATS, capacity,
     tl.store(STATS + part * 2 + 1, denominator, row < 4)
 
 
-def attention_gqa(q, key, value, cu_query, cu_key, capacity, lengths, scale, split=8):
+def attention_gqa(q, key, value, cu_query, cu_key, capacity, lengths, scale, split=8, block_n=64):
     batch = q.shape[0]
     partial = torch.empty((batch, 32, split, 128), device=q.device, dtype=torch.float32)
     stats = torch.empty((batch, 32, split, 2), device=q.device, dtype=torch.float32)
     out = torch.empty_like(q)
     _partial_gqa[(batch, 8, split)](
         q, key, value, lengths, partial, stats, capacity,
-        split, scale * 1.4426950408889634, 64, num_warps=4, num_stages=2,
+        split, scale * 1.4426950408889634, block_n, num_warps=4, num_stages=2,
     )
     _combine[(batch * 32,)](partial, stats, out, split, num_warps=4)
     return out

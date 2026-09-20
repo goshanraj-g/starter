@@ -7,7 +7,6 @@ import torch
 from torch.nn.functional import linear as native_linear
 
 from kernels.linear import linear as triton_linear
-from kernels.padded_linear import padded_linear
 
 
 def graph_time(operation, x, weights):
@@ -75,11 +74,8 @@ def select_linears(model, batch):
                 if elapsed < best_ms:
                     best, best_ms = column_candidate, elapsed
             del layouts, actual
-        candidates = [partial(triton_linear, split=split)
-                      for split in ((1,) if name == "head" else (2, 4, 8))]
-        if batch < 16:
-            candidates.append(padded_linear)
-        for candidate in candidates:
+        for split in ((1,) if name == "head" else (2, 4, 8)):
+            candidate = partial(triton_linear, split=split)
             result = candidate(x, weights[0])
             # Detect implementation mistakes before selecting a kernel. End-to-
             # end greedy/teacher-forced validation is still required separately.

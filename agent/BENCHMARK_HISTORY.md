@@ -25,3 +25,4 @@ Scores are hidden-workload geometric means. Failed runs are ineligible.
 | [stage16_attention](results/stage16_attention.json) | succeeded | 872.5 | 220.3 / 435.7 / 2726.7 | 16.52 |
 | [stage17_rotary](results/stage17_rotary.json) | succeeded | 889.0 | 223.5 / 460.2 / 2783.5 | 16.55 |
 | [stage18_matvec](results/stage18_matvec.json) | succeeded | 875.6 | 228.9 / 456.3 / 2783.6 | 16.55 |
+| [stage19_padding](results/stage19_padding.json) | succeeded | 879.8 | 228.9 / 457.9 / 2615.6 | 16.55 |
