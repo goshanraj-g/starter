@@ -476,6 +476,14 @@ validation here does not establish numerical correctness.
 
 ## Stage 17 — rotary-only prefill fusion
 
+- Commit: `722a9158c5eaf5c0ad7fcc78a517aa4e220debe7`.
+- Submission: `fc1aa4b3-317a-4537-a353-9ee3abab0d67`.
+- Run: `e70a1832-ebd9-4781-a3fd-8b34d8d525e3`; **passed all gates, 889.0 tokens/s**.
+- Raw report: `agent/results/stage17_rotary.json`.
+- Public throughput: 223.5 / 460.2 / 2783.5 tokens/s.
+- TTFT/native: 0.32 / 0.66 / 0.64; TPOT/native: 0.11 / 0.12 / 0.12.
+- Peak memory: 16.55 GB. Retain: hidden score improves 1.9%.
+
 - Keep separate native Q/K/V projections and the proven per-head norms.
 - Fuse only BF16 rotary products/addition and full-prefix K/V cache writes.
 - Eager warmup checks bitwise equality against native Q/K rotary and V cache
@@ -486,11 +494,34 @@ validation here does not establish numerical correctness.
   Archive validation passes. Submitting after stage 16 passed all gates.
 
 
-## Prepared stage 18 — parallel small-batch matrix-vector reduction
+## Stage 18 — parallel small-batch matrix-vector reduction
 
 - Draft `agent/candidates/matvec_split.py` divides K into 1024-element chunks
   computed independently, using BF16 operands and FP32 products/reductions.
 - A second kernel sums FP32 partials and performs the single output BF16 cast.
   No sequential K loop and no padded-partial copy/zero kernels.
 - Intended for the existing measured small-batch selector, with its numerical
-  checks and minimum improvement threshold. Not imported or submitted.
+  checks and minimum improvement threshold. Archive validation passes;
+  submitting after stage 17 passed all gates.
+
+
+## Prepared stage 19 — native BF16 matrix row padding
+
+- Draft `agent/candidates/padded_linear.py` pads small decode matrices with
+  zero rows, calls native BF16 linear, and returns only the real batch rows.
+- This changes native GEMM algorithm selection while preserving every real
+  operand and formula. Intended as a measured candidate for batches below 16.
+- Additional padding cost is included in warmup timing; keep only if it beats
+  the existing candidates. Not imported or submitted.
+
+
+## Prepared stage 20 — attention partition/block tuning
+
+- Stage 16 produced a real 6.5% hidden score gain, motivating two additional
+  full-prefix grouped-query candidates: four partitions with 64-token blocks,
+  and sixteen partitions with 32-token blocks.
+- Smaller blocks can expose more parallel work at low batch/context sizes;
+  fewer partitions can reduce overhead at larger batches. Warmup measures
+  both against the existing options and native attention.
+- Same numerical checks, FP32 reductions, BF16 probability boundaries and
+  10% native speed threshold. Drafts remain outside the engine.
