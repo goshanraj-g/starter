@@ -618,6 +618,17 @@ validation here does not establish numerical correctness.
 
 ## Stage 22 — select cuBLAS/cuBLASLt for prefill
 
+- Commit: `d3182a267897a5a8ca931f5f9ad75f910e16ce0f`.
+- Submission: `d0a10c34-2a10-4dbd-a121-c0916cde5f2a`.
+- Run: `196a4bf8-b1d4-4367-827e-d444f3281db1`; **passed all gates, 900.4 tokens/s**.
+- Raw report: `agent/results/stage22_prefill_lt.json`.
+- Public throughput: 229.8 / 465.7 / 2809.8 tokens/s.
+- TTFT/native: 0.30 / 0.64 / 0.61; TPOT/native: 0.11 / 0.12 / 0.13.
+- Peak memory: 17.22 GB. **Reverted**: no established prefill benefit.
+  Public TTFT was essentially unchanged (12.8 / 128.2 / 117.3 ms versus
+  12.6 / 127.2 / 117.8 ms). Unchanged decode varied by 2–4% across runs,
+  so do not attribute the whole score decline to prefill backend selection.
+
 - Pinned PyTorch 2.5.1 exposes `torch.backends.cuda.preferred_blas_library`;
   its CUDA BF16 GEMM implementation honors cuBLASLt for ordinary no-bias GEMMs.
 - https://raw.githubusercontent.com/pytorch/pytorch/v2.5.1/torch/backends/cuda/__init__.py
@@ -631,7 +642,7 @@ validation here does not establish numerical correctness.
   and full-decode selector. No measured-call tuning or backend switching.
 
 
-## Prepared stage 22a — cuBLASLt decode matrix candidate
+## Stage 22a — cuBLASLt decode matrix candidate
 
 - If prefill backend selection is insufficient, independently add native
   cuBLASLt linear to the existing per-category decode selector.
@@ -639,6 +650,9 @@ validation here does not establish numerical correctness.
   linear call and restores the prior preference, leaving rotary unaffected.
 - The existing all-layer graph timing and numerical checks select it only
   when faster. Calls occur during warmup/capture; replay has no Python switches.
-- Source draft only. Prefer this library-backed option before stages 23/24.
+- Submitting on the verified stage 21 prefill, with stage 22 reverted.
+  For batches above 32, compare only
+  native cuBLAS/cuBLASLt; keep wider-batch Triton and layout copies disabled.
+  Prefer this library-backed option before stages 23/24.
 
 - Stage 22 archive validation passes; submitting after stage 21 passed all gates.
