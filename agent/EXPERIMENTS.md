@@ -496,6 +496,15 @@ validation here does not establish numerical correctness.
 
 ## Stage 18 — parallel small-batch matrix-vector reduction
 
+- Commit: `baefa332d620a542de5d99e8146287b2ffb70701`.
+- Submission: `1661dad7-1aa5-4985-88e5-1b17668df055`.
+- Run: `41588aec-d881-4c1d-8e5d-233c89fc5aeb`; **passed all gates, 875.6 tokens/s**.
+- Raw report: `agent/results/stage18_matvec.json`.
+- Public throughput: 228.9 / 456.3 / 2783.6 tokens/s.
+- TTFT/native: 0.40 / 0.66 / 0.64; TPOT/native: 0.15 / 0.16 / 0.16.
+- Peak memory: 16.55 GB. **Reverted**: hidden score falls 1.5% versus stage 17;
+  the extra candidate does not establish a useful overall gain.
+
 - Draft `agent/candidates/matvec_split.py` divides K into 1024-element chunks
   computed independently, using BF16 operands and FP32 products/reductions.
 - A second kernel sums FP32 partials and performs the single output BF16 cast.
@@ -505,14 +514,15 @@ validation here does not establish numerical correctness.
   submitting after stage 17 passed all gates.
 
 
-## Prepared stage 19 — native BF16 matrix row padding
+## Stage 19 — native BF16 matrix row padding
 
 - Draft `agent/candidates/padded_linear.py` pads small decode matrices with
   zero rows, calls native BF16 linear, and returns only the real batch rows.
 - This changes native GEMM algorithm selection while preserving every real
   operand and formula. Intended as a measured candidate for batches below 16.
 - Additional padding cost is included in warmup timing; keep only if it beats
-  the existing candidates. Not imported or submitted.
+  the existing candidates. Submitting on the passing stage 17 engine after
+  reverting the stage 18 matrix-vector candidate.
 
 
 ## Prepared stage 20 — attention partition/block tuning
@@ -525,3 +535,26 @@ validation here does not establish numerical correctness.
   both against the existing options and native attention.
 - Same numerical checks, FP32 reductions, BF16 probability boundaries and
   10% native speed threshold. Drafts remain outside the engine.
+
+
+## Prepared stage 21 — prefill residual/norm and separate-input SwiGLU
+
+- Drafts preserve separate native Q/K/V and gate/up GEMMs. Fuse residual add
+  with the next norm, and native SiLU with its up-projection multiplication.
+- The prefill norm kernel mirrors the original worked RMSNorm's runtime
+  divisor/epsilon, warp count, block size, casts and compiler fusion setting.
+- Eager warmup checks bitwise equality of residuals, normalized states and
+  SwiGLU outputs against the established prefill operations at every layer.
+- Last-layer final normalization remains restricted to the last prompt token.
+- Drafts stay outside the engine until prior stages are measured.
+
+
+## Prepared stage 22 — fuse decode gate/up split reduction and SwiGLU
+
+- Reuse the current BF16/FP32 split-K GEMM and combine its FP32 reduction
+  with SwiGLU, preserving both GEMM output BF16 casts and the SiLU BF16 cast.
+- Compare complete projection-plus-activation paths during warmup. Existing
+  selected GEMM plus SwiGLU remains the fallback; retain fusion only with
+  at least a measured 2% category improvement and numerical checks passed.
+- Eliminates an intermediate BF16 tensor and one launch where selected.
+- Draft remains outside the engine until prior stages are measured.
