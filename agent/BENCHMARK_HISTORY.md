@@ -31,3 +31,5 @@ Scores are hidden-workload geometric means. Failed runs are ineligible.
 | [stage22_prefill_lt](results/stage22_prefill_lt.json) | succeeded | 900.4 | 229.8 / 465.7 / 2809.8 | 17.22 |
 | [stage22a_decode_lt](results/stage22a_decode_lt.json) | succeeded | 881.9 | 230.3 / 461.0 / 2625.5 | 17.32 |
 | [stage23_fused_gate_up](results/stage23_fused_gate_up.json) | succeeded | 913.0 | 232.0 / 469.0 / 2843.1 | 17.22 |
+| [stage24_decode_tuning](results/stage24_decode_tuning.json) | succeeded | 895.3 | 230.8 / 463.7 / 2800.2 | 17.29 |
+| [control_stage21_repeat](results/control_stage21_repeat.json) | succeeded | 923.3 | 233.9 / 476.6 / 2856.1 | 17.22 |

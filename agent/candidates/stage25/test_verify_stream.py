@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import unittest
 
 
-path = Path(__file__).resolve().parents[1] / "engine/kernels/verify_graph.py"
+path = Path(__file__).resolve().parents[3] / "agent/candidates/stage25/verify_graph.py"
 tree = ast.parse(path.read_text())
 functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)
              and node.name in ("group_size", "stream_verify")]

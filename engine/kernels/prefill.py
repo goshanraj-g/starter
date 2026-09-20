@@ -3,6 +3,7 @@
 import torch
 from transformers.models.qwen3.modeling_qwen3 import apply_rotary_pos_emb
 from kernels.prefill_rotary import rotary_store
+from kernels.prefill_norm_rotary import norm_rotary_store
 from kernels.prefill_pointwise import residual_norm, swiglu
 
 
@@ -28,21 +29,32 @@ def prefill(model, input_ids, cache, check_rotary=False):
     for index, layer in enumerate(base.layers):
         attn = layer.self_attn
         shape = (batch, length, -1, attn.head_dim)
-        q = attn.q_norm(attn.q_proj(n).view(shape))
-        k = attn.k_norm(attn.k_proj(n).view(shape))
+        raw_q = attn.q_proj(n).view(shape)
+        raw_k = attn.k_proj(n).view(shape)
         v = attn.v_proj(n).view(shape)
-        rotated = rotary_store(q, k, v, position_embeddings,
-                               cache.key_tokens[index], cache.value_tokens[index])
-        if check_rotary:
-            # Called in eager warmup only, never inside CUDA graph capture.
-            reference_q, reference_k = apply_rotary_pos_emb(
-                q.transpose(1, 2), k.transpose(1, 2), *position_embeddings,
-            )
-            if not (torch.equal(rotated, reference_q.transpose(1, 2))
-                    and torch.equal(cache.key_tokens[index][:, :length],
-                                    reference_k.transpose(1, 2))
-                    and torch.equal(cache.value_tokens[index][:, :length], v)):
-                raise RuntimeError("Prefill rotary/cache fusion differs from native BF16 output")
+        key, value = cache.key_tokens[index], cache.value_tokens[index]
+        fused = getattr(attn, "_fused_prefill_norm", False)
+        if check_rotary or fused:
+            rotated = norm_rotary_store(raw_q, raw_k, v, attn,
+                                        position_embeddings, key, value)
+        if check_rotary or not fused:
+            q, k = attn.q_norm(raw_q), attn.k_norm(raw_k)
+            if check_rotary:
+                reference_q, reference_k = apply_rotary_pos_emb(
+                    q.transpose(1, 2), k.transpose(1, 2), *position_embeddings,
+                )
+                fused = (torch.equal(rotated, reference_q.transpose(1, 2))
+                         and torch.equal(key[:, :length], reference_k.transpose(1, 2))
+                         and torch.equal(value[:, :length], v))
+                attn._fused_prefill_norm = fused
+            if not fused:
+                rotated = rotary_store(q, k, v, position_embeddings, key, value)
+                if check_rotary and not (
+                    torch.equal(rotated, reference_q.transpose(1, 2))
+                    and torch.equal(key[:, :length], reference_k.transpose(1, 2))
+                    and torch.equal(value[:, :length], v)
+                ):
+                    raise RuntimeError("Prefill rotary/cache differs from native BF16 output")
         a = torch.ops.aten._flash_attention_forward(
             rotated, cache.key_tokens[index][:, :length], cache.value_tokens[index][:, :length],
             None, None, length, length, 0.0, True, False,
