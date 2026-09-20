@@ -580,6 +580,14 @@ validation here does not establish numerical correctness.
 
 ## Stage 23 — fuse decode gate/up split reduction and SwiGLU
 
+- Commit: `bca35e362f57c38ca7bac130ed787dc31c2bb802`.
+- Submission: `699faf93-c44c-42c7-aaa2-7e7ee16dcd29`.
+- Run: `94325ace-aad0-471f-a25b-8d44afe879d8`; **passed all gates, 913.0 tokens/s**.
+- Raw report: `agent/results/stage23_fused_gate_up.json`.
+- Public throughput: 232.0 / 469.0 / 2843.1 tokens/s.
+- TTFT/native: 0.39 / 0.63 / 0.61; TPOT/native: 0.15 / 0.15 / 0.16.
+- Peak memory: 17.22 GB. **Reverted**: no established overall gain.
+
 - Reuse the current BF16/FP32 split-K GEMM and combine its FP32 reduction
   with SwiGLU, preserving both GEMM output BF16 casts and the SiLU BF16 cast.
 - Compare complete projection-plus-activation paths during warmup. Existing
@@ -589,7 +597,7 @@ validation here does not establish numerical correctness.
 - Archive validation passes. Submitting on stage 21 after reverting stage 22a.
 
 
-## Prepared stage 24 — verify matrix choices on full decode groups
+## Stage 24 — verify matrix choices on full decode groups
 
 - Stage 18's isolated matrix timings did not improve its official hidden score.
 - Draft `agent/candidates/tune_decode.py` times complete reset-plus-decode
@@ -597,9 +605,10 @@ validation here does not establish numerical correctness.
 - Try reverting each selected projection category to native linear; keep a
   reversion only if the entire group is at least 2% faster and its warmup token
   sequence is identical to the established path. No tuning occurs in samples.
-- A separately fused gate/up path retains its own selector. No measured prompt
+- The unhelpful stage 23 fusion is reverted; tune the five original matrix
+  categories. Skip already-native choices and skip profiling if none remain. No measured prompt
   determines the choice; all probes occur in the supplied untimed warmup.
-- Draft remains outside the engine until prior stages are measured.
+- Submitting on stage 21 after reverting stage 23. Archive validation passes.
 
 
 ## Last-resort research — exact lookahead/Jacobi decoding

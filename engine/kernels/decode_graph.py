@@ -7,9 +7,9 @@ their contents change between replays. Host conversion is the caller's job.
 import torch
 from kernels.qkv_epilogue import qkv_epilogue
 from kernels.select_linears import select_linears
+from kernels.tune_decode import tune_decode
 from kernels.select_attention import select_attention
-from kernels.pointwise import residual_norm
-from kernels.fused_gate_up import select_gate_up
+from kernels.pointwise import residual_norm, swiglu
 
 
 class GraphCache:
@@ -42,7 +42,6 @@ class DecodeGraph:
         self.valid_lengths = torch.empty(batch, dtype=torch.int32, device=first_token.device)
         self.cache = GraphCache(storage, self.position)
         self.linears = select_linears(model, batch)
-        self.gate_up = select_gate_up(model, batch, self.linears["gate_up"])
         self.attention = select_attention(
             self.cache.flat_keys, self.cache.flat_values, self.cu_query,
             self.cu_key, self.capacity, first_position,
@@ -62,6 +61,7 @@ class DecodeGraph:
                 self.reset(first_token, first_position)
                 self.step()
         current_stream.wait_stream(stream)
+        tune_decode(self, first_token, first_position)
         counts = {self.chunk_size}
         if decode_steps % self.chunk_size:
             counts.add(decode_steps % self.chunk_size)
@@ -110,7 +110,7 @@ class DecodeGraph:
                 layer.post_attention_layernorm,
             )
             mlp = layer.mlp
-            activated = self.gate_up(n, mlp.gate_up_weight)
+            activated = swiglu(self.linears["gate_up"](n, mlp.gate_up_weight))
             next_norm = (base.layers[layer_idx + 1].input_layernorm
                          if layer_idx + 1 < len(base.layers) else base.norm)
             x, n = residual_norm(

@@ -97,3 +97,37 @@ as in the proven kernel. Compare short/full prefixes with the native reference.
 At small batches, two-token GEMMs can remain within the same padded matrix
 row tiles as single-token GEMMs. This is a performance hypothesis to measure,
 not a guarantee. Native attention alone may erase the acceptance benefit.
+
+## Conservative integration if cheaper options fail
+
+Keep a separate speculative cache with capacity `S+O+2`, a separate prefill
+graph, and a separate decode graph. Share immutable model weights. This lets the
+ordinary decoder remain unchanged as a fallback and avoids changing its cache
+capacity merely to test speculation. Release the unused decoder/cache/prefill
+pool after selection.
+
+Limit initial trials to small batches where two queries still fit the existing
+16-row matrix tiles. During untimed warmup, compare whole generation (prefill,
+all decode passes, and host snapshots) against the established decoder. Use
+multiple trials, including a second same-shape prompt made by shifting the
+warmup token IDs, to exercise cache reset and avoid choosing a path from one
+favorable continuation. Require identical complete token sequences and a clear
+whole-generation speed advantage. Keep that choice fixed in measured calls.
+
+The first `generate` call can return the already computed outputs for its
+original prompt after tuning; never return a timing trial's modified-prompt
+outputs. Subsequent calls must reset and compute from their new input IDs.
+Any warmup state from another trial is invalidated before the next call.
+
+For `T=2`, the device update accepts `1 + (draft == prediction0)`, clamped to
+remaining output count. Store only accepted predictions, update the current
+input to the last accepted prediction, and reuse prediction1 as the next
+unverified proposal. Completed rows freeze their inputs/position/count. Capture
+1/2/4/8 passes; choose the largest power of two no greater than
+`max(1, remaining//2)` and at most eight. This bounds wasted work near the tail.
+
+Meaningful host tests should simulate prefix-dependent next-token oracles,
+forced accept/reject patterns, overwritten invalid cache suffixes, differing
+row progress, completed-row freezing, EOS IDs, and exact ordered yields for
+short and long output counts. GPU attention/numerical verification remains
+necessary; host simulations cannot validate Triton arithmetic.
