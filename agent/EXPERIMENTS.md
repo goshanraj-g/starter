@@ -449,6 +449,14 @@ validation here does not establish numerical correctness.
 
 ## Stage 16 — measured full-prefix Triton decode attention
 
+- Commit: `d0fb1172fa469ed4c873724ac56552b30c7ff24b`.
+- Submission: `4cbe542f-52b4-48b9-98b8-0155890261cf`.
+- Run: `ac774750-1527-4c30-81fe-f54b3dc900d9`; **passed all gates, 872.5 tokens/s**.
+- Raw report: `agent/results/stage16_attention.json`.
+- Public throughput: 220.3 / 435.7 / 2726.7 tokens/s.
+- TTFT/native: 0.52 / 0.73 / 0.72; TPOT/native: 0.16 / 0.16 / 0.16.
+- Peak memory: 16.52 GB. Retain: hidden score improves 6.5%.
+
 - Compare native variable-length FlashAttention with two exact full-prefix
   split-K candidates: scalar query-head reduction and grouped-query tensor cores.
 - BF16 Q/K/V, FP32 online softmax/accumulators, BF16 probability products,
@@ -466,7 +474,7 @@ validation here does not establish numerical correctness.
   This candidate uses BF16 rather than the tutorial's FP16; no FP8 path is used.
 
 
-## Prepared stage 17 — rotary-only prefill fusion
+## Stage 17 — rotary-only prefill fusion
 
 - Keep separate native Q/K/V projections and the proven per-head norms.
 - Fuse only BF16 rotary products/addition and full-prefix K/V cache writes.
@@ -474,4 +482,15 @@ validation here does not establish numerical correctness.
   contents at every layer. Capture then performs no host-side checks.
 - No clear indexing bug was found in the failed stage 13 combined fusion;
   its packed prefill projections and fused normalization remain reverted.
-- Source drafts stay under `agent/candidates/`; not imported or submitted yet.
+- Prepared in the local engine, with drafts under `agent/candidates/`.
+  Archive validation passes. Submitting after stage 16 passed all gates.
+
+
+## Prepared stage 18 — parallel small-batch matrix-vector reduction
+
+- Draft `agent/candidates/matvec_split.py` divides K into 1024-element chunks
+  computed independently, using BF16 operands and FP32 products/reductions.
+- A second kernel sums FP32 partials and performs the single output BF16 cast.
+  No sequential K loop and no padded-partial copy/zero kernels.
+- Intended for the existing measured small-batch selector, with its numerical
+  checks and minimum improvement threshold. Not imported or submitted.

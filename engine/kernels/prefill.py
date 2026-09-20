@@ -1,10 +1,11 @@
-"""Native GQA prefill; original projections and BF16 boundaries."""
+"""Original prefill projections/norms with exact BF16 rotary/cache fusion."""
 
 import torch
 from transformers.models.qwen3.modeling_qwen3 import apply_rotary_pos_emb
+from kernels.prefill_rotary import rotary_store
 
 
-def prefill(model, input_ids, cache):
+def prefill(model, input_ids, cache, check_rotary=False):
     if cache.length != 0:
         raise ValueError("Causal prefill requires a reset cache")
     base = model.model
@@ -16,19 +17,26 @@ def prefill(model, input_ids, cache):
         attn = layer.self_attn
         n = layer.input_layernorm(x)
         shape = (batch, length, -1, attn.head_dim)
-        q = attn.q_norm(attn.q_proj(n).view(shape)).transpose(1, 2)
-        k = attn.k_norm(attn.k_proj(n).view(shape)).transpose(1, 2)
-        v = attn.v_proj(n).view(shape).transpose(1, 2)
-        q, k = apply_rotary_pos_emb(q, k, *position_embeddings)
-        # Native dense FlashAttention accepts [B,T,H,D], with Hq/Hkv=4.
-        # All prompt queries and keys start at position zero, so is_causal=True
-        # is the exact mask. No padded or uninitialized cache slots are passed.
+        q = attn.q_norm(attn.q_proj(n).view(shape))
+        k = attn.k_norm(attn.k_proj(n).view(shape))
+        v = attn.v_proj(n).view(shape)
+        rotated = rotary_store(q, k, v, position_embeddings,
+                               cache.key_tokens[index], cache.value_tokens[index])
+        if check_rotary:
+            # Called in eager warmup only, never inside CUDA graph capture.
+            reference_q, reference_k = apply_rotary_pos_emb(
+                q.transpose(1, 2), k.transpose(1, 2), *position_embeddings,
+            )
+            if not (torch.equal(rotated, reference_q.transpose(1, 2))
+                    and torch.equal(cache.key_tokens[index][:, :length],
+                                    reference_k.transpose(1, 2))
+                    and torch.equal(cache.value_tokens[index][:, :length], v)):
+                raise RuntimeError("Prefill rotary/cache fusion differs from native BF16 output")
         a = torch.ops.aten._flash_attention_forward(
-            q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2),
+            rotated, cache.key_tokens[index][:, :length], cache.value_tokens[index][:, :length],
             None, None, length, length, 0.0, True, False,
             scale=attn.scaling,
         )[0]
-        cache.update(k, v, index)
         x = x + attn.o_proj(a.reshape(batch, length, -1))
         x = x + layer.mlp(layer.post_attention_layernorm(x))
     cache.length = length

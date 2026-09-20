@@ -17,7 +17,7 @@ class PrefillGraph:
         stream.wait_stream(current)
         with torch.cuda.stream(stream):
             cache.reset()
-            logits = prefill(model, self.input, cache)
+            logits = prefill(model, self.input, cache, check_rotary=True)
             tokens = logits[:, -1].argmax(-1, keepdim=True)
         current.wait_stream(stream)
         del logits, tokens
