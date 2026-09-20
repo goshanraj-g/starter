@@ -29,3 +29,4 @@ Scores are hidden-workload geometric means. Failed runs are ineligible.
 | [stage20_attention_tiles](results/stage20_attention_tiles.json) | succeeded | 916.7 | 235.1 / 472.7 / 2838.3 | 16.55 |
 | [stage21_prefill_pointwise](results/stage21_prefill_pointwise.json) | succeeded | 925.0 | 234.8 / 477.5 / 2850.7 | 17.22 |
 | [stage22_prefill_lt](results/stage22_prefill_lt.json) | succeeded | 900.4 | 229.8 / 465.7 / 2809.8 | 17.22 |
+| [stage22a_decode_lt](results/stage22a_decode_lt.json) | succeeded | 881.9 | 230.3 / 461.0 / 2625.5 | 17.32 |

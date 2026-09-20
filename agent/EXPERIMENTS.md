@@ -578,7 +578,7 @@ validation here does not establish numerical correctness.
 - Archive validation passes. Submitting after stage 20 passed all gates.
 
 
-## Prepared stage 23 — fuse decode gate/up split reduction and SwiGLU
+## Stage 23 — fuse decode gate/up split reduction and SwiGLU
 
 - Reuse the current BF16/FP32 split-K GEMM and combine its FP32 reduction
   with SwiGLU, preserving both GEMM output BF16 casts and the SiLU BF16 cast.
@@ -586,7 +586,7 @@ validation here does not establish numerical correctness.
   selected GEMM plus SwiGLU remains the fallback; retain fusion only with
   at least a measured 2% category improvement and numerical checks passed.
 - Eliminates an intermediate BF16 tensor and one launch where selected.
-- Draft remains outside the engine until prior stages are measured.
+- Archive validation passes. Submitting on stage 21 after reverting stage 22a.
 
 
 ## Prepared stage 24 — verify matrix choices on full decode groups
@@ -643,6 +643,15 @@ validation here does not establish numerical correctness.
 
 
 ## Stage 22a — cuBLASLt decode matrix candidate
+
+- Commit: `0061420a5a9f1df5ce68985331a90f530193d16c`.
+- Submission: `e895d142-ba3a-470d-9acf-e8ba938f9245`.
+- Run: `e5232ead-dd2e-4041-8a48-c1c930b444d1`; **passed all gates, 881.9 tokens/s**.
+- Raw report: `agent/results/stage22a_decode_lt.json`.
+- Public throughput: 230.3 / 461.0 / 2625.5 tokens/s.
+- TTFT/native: 0.28 / 0.64 / 0.62; TPOT/native: 0.11 / 0.12 / 0.13.
+- Peak memory: 17.32 GB. **Reverted**: no established overall gain; restore
+  the verified stage 21 projection selector.
 
 - If prefill backend selection is insufficient, independently add native
   cuBLASLt linear to the existing per-category decode selector.

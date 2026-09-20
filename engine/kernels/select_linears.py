@@ -7,7 +7,6 @@ import torch
 from torch.nn.functional import linear as native_linear
 
 from kernels.linear import linear as triton_linear
-from kernels.lt_linear import lt_linear
 
 
 def graph_time(operation, x, weights):
@@ -51,6 +50,8 @@ def select_linears(model, batch):
         "down": [layer.mlp.down_proj.weight for layer in layers],
         "head": [model.lm_head.weight],
     }
+    if batch > 32:
+        return {name: native_linear for name in categories}
     selected = {}
     base_peak = torch.cuda.max_memory_allocated()
     retained = 0
@@ -64,7 +65,7 @@ def select_linears(model, batch):
         native_ms = best_ms
         column_candidate = None
         extra_bytes = sum(weight.numel() * weight.element_size() for weight in weights)
-        if batch <= 32 and base_peak + retained + extra_bytes < limit:
+        if base_peak + retained + extra_bytes < limit:
             layouts = {weight.data_ptr(): weight.t().contiguous().t() for weight in weights}
             column_candidate = partial(column_linear, layouts=layouts)
             actual = column_candidate(x, weights[0])
@@ -73,11 +74,8 @@ def select_linears(model, batch):
                 if elapsed < best_ms:
                     best, best_ms = column_candidate, elapsed
             del layouts, actual
-        candidates = [lt_linear]
-        if batch <= 32:
-            candidates.extend(partial(triton_linear, split=split)
-                              for split in ((1,) if name == "head" else (2, 4, 8)))
-        for candidate in candidates:
+        for split in ((1,) if name == "head" else (2, 4, 8)):
+            candidate = partial(triton_linear, split=split)
             result = candidate(x, weights[0])
             # Detect implementation mistakes before selecting a kernel. End-to-
             # end greedy/teacher-forced validation is still required separately.

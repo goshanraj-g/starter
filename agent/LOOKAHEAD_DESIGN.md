@@ -77,3 +77,23 @@ The likely weakness is low acceptance for guesses derived from incorrect
 prefixes, especially when the slowest sequence controls a batch's completion.
 A larger verification window or the paper's n-gram lookahead branches could
 improve proposals, but would add compute, masking complexity, and timing risk.
+
+## Attention cost to resolve before trying it
+
+Native FlashAttention's specialized single-query GQA path does not apply to
+`T=2`. Use native causal varlen attention as the numerical reference, but a
+Triton candidate may be necessary for any gain. The existing grouped-query
+split kernel can represent `4*T` real rows per KV head in its padded 16-row tile.
+For `T=2`, eight real rows still fit the same tensor-core tile as current decode.
+Map row `r` to token `r//4` and head `kv_head*4 + r%4`; mask keys at or before
+`valid_length - T + token_index` for each row. Read every valid prefix slot.
+
+Unlike single-token attention, a nonempty partition for the second query may
+be completely masked for the first. Handle each empty row explicitly: keep its
+numerator/denominator zero and its maximum at negative infinity, avoiding
+`exp(-inf - -inf)` NaNs. Store partials indexed by `[B,T,32,split,128]` and combine
+as in the proven kernel. Compare short/full prefixes with the native reference.
+
+At small batches, two-token GEMMs can remain within the same padded matrix
+row tiles as single-token GEMMs. This is a performance hypothesis to measure,
+not a guarantee. Native attention alone may erase the acceptance benefit.
