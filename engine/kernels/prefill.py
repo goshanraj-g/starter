@@ -3,6 +3,17 @@
 import torch
 from transformers.models.qwen3.modeling_qwen3 import apply_rotary_pos_emb
 from kernels.prefill_rotary import rotary_store
+from kernels.prefill_pointwise import residual_norm, swiglu
+
+
+def checked_residual_norm(x, branch, norm, check):
+    residual, normal = residual_norm(x, branch, norm)
+    if check:
+        reference = x + branch
+        if not (torch.equal(residual, reference)
+                and torch.equal(normal, norm(reference))):
+            raise RuntimeError("Prefill residual/norm fusion differs from native BF16 output")
+    return residual, normal
 
 
 def prefill(model, input_ids, cache, check_rotary=False):
@@ -13,9 +24,9 @@ def prefill(model, input_ids, cache, check_rotary=False):
     x = base.embed_tokens(input_ids)
     positions = torch.arange(length, device=input_ids.device)
     position_embeddings = base.rotary_emb(x, positions.unsqueeze(0))
+    n = base.layers[0].input_layernorm(x)
     for index, layer in enumerate(base.layers):
         attn = layer.self_attn
-        n = layer.input_layernorm(x)
         shape = (batch, length, -1, attn.head_dim)
         q = attn.q_norm(attn.q_proj(n).view(shape))
         k = attn.k_norm(attn.k_proj(n).view(shape))
@@ -37,7 +48,21 @@ def prefill(model, input_ids, cache, check_rotary=False):
             None, None, length, length, 0.0, True, False,
             scale=attn.scaling,
         )[0]
-        x = x + attn.o_proj(a.reshape(batch, length, -1))
-        x = x + layer.mlp(layer.post_attention_layernorm(x))
+        x, n = checked_residual_norm(
+            x, attn.o_proj(a.reshape(batch, length, -1)),
+            layer.post_attention_layernorm, check_rotary,
+        )
+        mlp = layer.mlp
+        gate, up = mlp.gate_proj(n), mlp.up_proj(n)
+        activated = swiglu(gate, up)
+        if check_rotary and not torch.equal(activated, mlp.act_fn(gate) * up):
+            raise RuntimeError("Prefill SwiGLU fusion differs from native BF16 output")
+        branch = mlp.down_proj(activated)
+        if index + 1 < len(base.layers):
+            x, n = checked_residual_norm(
+                x, branch, base.layers[index + 1].input_layernorm, check_rotary,
+            )
+        else:
+            x = x + branch
     cache.length = length
     return model.lm_head(base.norm(x[:, -1:, :]))

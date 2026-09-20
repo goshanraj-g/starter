@@ -39,7 +39,8 @@ def report(detail: dict) -> bool:
 
     for label, value in (
         ("failure", result.get("failureMessage") or result.get("failureCode")),
-        ("error", detail.get("errorMessage") or detail.get("errorCode")),
+        ("error", (detail.get("errorMessage") or detail.get("errorCode"))
+         if state != "succeeded" else None),
         ("not ranked", result.get("rankingReason")),
     ):
         if value:

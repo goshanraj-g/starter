@@ -22,6 +22,7 @@ for _, path, detail in sorted(reports):
     score_text = f'{score:.1f}' if score is not None else '—'
     peak = (result.get('metrics') or {}).get('peakMemoryBytes')
     peak_text = f'{peak / 1e9:.2f}' if peak else '—'
-    state = detail.get('errorCode') or detail.get('state') or 'unknown'
+    state = ('succeeded' if detail.get('state') == 'succeeded'
+             else detail.get('errorCode') or detail.get('state') or 'unknown')
     lines.append(f'| [{path.stem}](results/{path.name}) | {state} | {score_text} | {rates} | {peak_text} |')
 (root / 'BENCHMARK_HISTORY.md').write_text('\n'.join(lines) + '\n')

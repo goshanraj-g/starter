@@ -537,6 +537,16 @@ validation here does not establish numerical correctness.
 
 ## Stage 20 — attention partition/block tuning
 
+- Commit: `a054b8e1437510e52750b6f622ec07da74ae3988`.
+- Submission: `15510cc7-d766-4cd2-b692-b4f09a4c742d`.
+- Run: `b7ffe49b-ae1e-40a5-8328-94efa711361d`; **passed all gates, 916.7 tokens/s**
+  after an automatic platform harness-error retry. Terminal result is ranked;
+  the API retains a stale earlier error message.
+- Raw report: `agent/results/stage20_attention_tiles.json`.
+- Public throughput: 235.1 / 472.7 / 2838.3 tokens/s.
+- TTFT/native: 0.44 / 0.65 / 0.63; TPOT/native: 0.17 / 0.18 / 0.18.
+- Peak memory: 16.55 GB. Retain: hidden score improves 3.1% over stage 17.
+
 - Stage 16 produced a real 6.5% hidden score gain, motivating two additional
   full-prefix grouped-query candidates: four partitions with 64-token blocks,
   and sixteen partitions with 32-token blocks.
@@ -548,7 +558,7 @@ validation here does not establish numerical correctness.
   reverting stage 19 to the verified stage 17 projection selector.
 
 
-## Prepared stage 21 — prefill residual/norm and separate-input SwiGLU
+## Stage 21 — prefill residual/norm and separate-input SwiGLU
 
 - Drafts preserve separate native Q/K/V and gate/up GEMMs. Fuse residual add
   with the next norm, and native SiLU with its up-projection multiplication.
@@ -557,7 +567,7 @@ validation here does not establish numerical correctness.
 - Eager warmup checks bitwise equality of residuals, normalized states and
   SwiGLU outputs against the established prefill operations at every layer.
 - Last-layer final normalization remains restricted to the last prompt token.
-- Drafts stay outside the engine until prior stages are measured.
+- Archive validation passes. Submitting after stage 20 passed all gates.
 
 
 ## Prepared stage 22 — fuse decode gate/up split reduction and SwiGLU
@@ -582,3 +592,17 @@ validation here does not establish numerical correctness.
 - A separately fused gate/up path retains its own selector. No measured prompt
   determines the choice; all probes occur in the supplied untimed warmup.
 - Draft remains outside the engine until prior stages are measured.
+
+
+## Last-resort research — exact lookahead/Jacobi decoding
+
+- Primary paper: https://proceedings.mlr.press/v235/fu24a.html . It generates
+  and verifies lookahead candidates with the target model, without another
+  checkpoint. This is research only, not implemented or submitted.
+- A minimal causal multi-token verifier can accept only the longest prefix
+  whose proposed inputs equal the preceding greedy outputs. After a mismatch,
+  discard the wrong suffix and overwrite its KV slots before reuse.
+- Requires per-sequence positions/valid lengths, exact cache rollback,
+  multi-token causal FlashAttention, and ordered output buffering. Different
+  acceptance rates across prompts can threaten the timing-spread gate.
+- Do not attempt before the cheaper measured kernel experiments are exhausted.
