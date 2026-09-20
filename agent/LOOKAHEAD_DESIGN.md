@@ -1,7 +1,9 @@
-# Unimplemented last-resort design: verified two-token Jacobi proposals
+# Exact two-token verification experiment
 
-This is a proposed experiment, not a measured optimization or a claim that it
-will improve this benchmark. Finish the cheaper kernel experiments first.
+Stage25 implements this experiment after stages22–24 failed to improve on
+stage21. It is not yet a measured optimization or a claim of a speedup.
+Proposals additionally use the latest previous matching trigram when present;
+the model verifies all proposals before acceptance.
 
 The primary reference is [Fu et al., ICML 2024](https://proceedings.mlr.press/v235/fu24a.html).
 Their exact lookahead method extracts and verifies candidates using the target
@@ -131,3 +133,15 @@ forced accept/reject patterns, overwritten invalid cache suffixes, differing
 row progress, completed-row freezing, EOS IDs, and exact ordered yields for
 short and long output counts. GPU attention/numerical verification remains
 necessary; host simulations cannot validate Triton arithmetic.
+
+Pinned source check: PyTorch 2.5.1's `BlockInfo` uses `seqused_k` for the
+actual key length, independent of reserved `cu_seqlens_k` capacity segments.
+Its causal forward kernel uses the difference between actual key/query lengths
+for bottom-right alignment and constructs the mask with those actual lengths.
+Sources:
+- https://raw.githubusercontent.com/pytorch/pytorch/v2.5.1/aten/src/ATen/native/transformers/cuda/flash_attn/block_info.h
+- https://raw.githubusercontent.com/pytorch/pytorch/v2.5.1/aten/src/ATen/native/transformers/cuda/flash_attn/flash_fwd_kernel.h
+- Direct read of pinned `mask.h` confirms the exclusive key limit is
+  `min(actual_K, query_row + 1 + actual_K - actual_Q)` for causal attention
+  (right window zero), so the first of two queries cannot see the proposal.
+  https://raw.githubusercontent.com/pytorch/pytorch/v2.5.1/aten/src/ATen/native/transformers/cuda/flash_attn/mask.h

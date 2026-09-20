@@ -9,6 +9,8 @@ from kernels.rmsnorm import FusedRMSNorm
 from kernels.projections import pack_projections
 from kernels.prefill import prefill
 from kernels.prefill_graph import PrefillGraph
+from kernels.select_verification import select_verification
+from kernels.verify_graph import stream_verify
 
 
 @torch.inference_mode()
@@ -83,6 +85,7 @@ class Engine:
         self.cache_shape = None
         self.decoder = None
         self.prefiller = None
+        self.verified_decode = False
 
     def generate(self, input_ids: list[list[int]], max_new_tokens: int):
         """Greedy continuation of every sequence, one step at a time.
@@ -95,6 +98,7 @@ class Engine:
             if max_new_tokens <= 0:
                 return
             current = torch.tensor(input_ids, dtype=torch.int64, device="cuda:0")
+            prompt = current
             batch, prompt_length = current.shape
             shape = (batch, prompt_length + max_new_tokens, max_new_tokens)
             if shape != self.cache_shape:
@@ -102,6 +106,7 @@ class Engine:
                 self.decoder = None
                 self.prefiller = None
                 self.cache = None
+                self.verified_decode = False
                 self.cache = PrefixCache(
                     self.model.config, batch, shape[1], current.device,
                     self.model.dtype,
@@ -120,6 +125,19 @@ class Engine:
                 self.decoder = DecodeGraph(
                     self.model, self.cache, current, prompt_length, max_new_tokens - 1,
                 )
+                selected = select_verification(
+                    self.model, self.cache, self.prefiller, self.decoder,
+                    prompt, max_new_tokens, stream_decode,
+                )
+                if selected is not None:
+                    (self.cache, self.prefiller, self.decoder, warmup_output,
+                     self.verified_decode) = selected
+                    yield from warmup_output
+                    return
+            if self.verified_decode:
+                self.decoder.reset(prompt, current)
+                yield from stream_verify(self.decoder, first, max_new_tokens)
+                return
             self.decoder.reset(current, prompt_length)
             # After copying a token to the host, start the next GPU step before
             # yielding. The harness can write the host list while decode runs.

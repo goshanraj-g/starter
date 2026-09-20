@@ -7,7 +7,6 @@ their contents change between replays. Host conversion is the caller's job.
 import torch
 from kernels.qkv_epilogue import qkv_epilogue
 from kernels.select_linears import select_linears
-from kernels.tune_decode import tune_decode
 from kernels.select_attention import select_attention
 from kernels.pointwise import residual_norm, swiglu
 
@@ -61,7 +60,6 @@ class DecodeGraph:
                 self.reset(first_token, first_position)
                 self.step()
         current_stream.wait_stream(stream)
-        tune_decode(self, first_token, first_position)
         counts = {self.chunk_size}
         if decode_steps % self.chunk_size:
             counts.add(decode_steps % self.chunk_size)

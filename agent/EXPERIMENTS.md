@@ -599,6 +599,10 @@ validation here does not establish numerical correctness.
 
 ## Stage 24 — verify matrix choices on full decode groups
 
+- Commit: `f23501ac8e9237d6d22c085915b1f13d4aab99f6`.
+- Submission: `74db1ca4-55e6-4201-95cb-c81cd0389499`.
+- Run: `df623bc5-82a8-4146-b2d7-09e5887adc4c`; validating.
+
 - Stage 18's isolated matrix timings did not improve its official hidden score.
 - Draft `agent/candidates/tune_decode.py` times complete reset-plus-decode
   groups, with actual layer dependencies, cache traffic, and greedy outputs.
@@ -674,3 +678,26 @@ validation here does not establish numerical correctness.
   Prefer this library-backed option before stages 23/24.
 
 - Stage 22 archive validation passes; submitting after stage 21 passed all gates.
+
+
+## Control — repeat the best stage 21 engine unchanged
+
+- Run: `c132335b-82d5-47fb-a791-c5615502f7f0`; queued.
+
+- Repeat submission `0ba9691f-6f19-4741-afdf-8a316ac7bc2a` once to quantify
+  run-to-run variation. Several later trials changed only prefill or small
+  batches yet observed substantial changes on untouched decode cases.
+- Idempotency key: `120c928b-7f36-4c8c-9230-f429f23cc891`.
+- No code changes; this is a timing control, not another optimization.
+
+## Stage24 result
+
+Full-decode matrix retuning passed every gate but scored 895.3009 tok/s, below stage21 924.9765. Reverted the retuning module. An unchanged stage21 control is measuring. Next experiment: exact two-token verification, with warmup output comparison and whole-generation selection.
+
+## Control and stage25
+
+The unchanged stage21 control `c132335b-82d5-47fb-a791-c5615502f7f0` passed every gate at 923.3 tok/s, consistent with the original 925.0. This confirms stage24 is not a useful gain.
+
+Stage25 implements exact two-token verification with independent per-sequence positions, full-prefix causal attention, BF16 cast-preserving Q/K epilogue, and device-side acceptance. Proposals use the previous unverified second prediction or the continuation of a previous matching trigram. Every accepted token is a greedy argmax on its verified prefix. Finished rows freeze; invalid KV suffixes are overwritten.
+
+Warmup compares complete output against ordinary decode on the actual warmup prompt and a shifted prompt, and only selects verification when both match exactly and each is at least 12% faster including prefill and handoff. Otherwise retain ordinary decode. Separate temporary caches/graphs have a conservative memory guard. Local protocol tests cover acceptance/rejection, uneven batch progress, EOS, output limits, and repeated prompts; no local CUDA runtime is available. GPU arithmetic and performance require remote validation.
