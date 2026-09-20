@@ -560,6 +560,14 @@ validation here does not establish numerical correctness.
 
 ## Stage 21 — prefill residual/norm and separate-input SwiGLU
 
+- Commit: `5d89892600b2159cf4cd1bc60ec60d74a3dee0d0`.
+- Submission: `0ba9691f-6f19-4741-afdf-8a316ac7bc2a`.
+- Run: `eb1d6a69-3c1f-4711-99af-a1949b90e6b0`; **passed all gates, 925.0 tokens/s**.
+- Raw report: `agent/results/stage21_prefill_pointwise.json`.
+- Public throughput: 234.8 / 477.5 / 2850.7 tokens/s.
+- TTFT/native: 0.38 / 0.63 / 0.62; TPOT/native: 0.14 / 0.15 / 0.16.
+- Peak memory: 17.22 GB. Retain: full bitwise warmup checks pass.
+
 - Drafts preserve separate native Q/K/V and gate/up GEMMs. Fuse residual add
   with the next norm, and native SiLU with its up-projection multiplication.
 - The prefill norm kernel mirrors the original worked RMSNorm's runtime
@@ -570,7 +578,7 @@ validation here does not establish numerical correctness.
 - Archive validation passes. Submitting after stage 20 passed all gates.
 
 
-## Prepared stage 22 — fuse decode gate/up split reduction and SwiGLU
+## Prepared stage 23 — fuse decode gate/up split reduction and SwiGLU
 
 - Reuse the current BF16/FP32 split-K GEMM and combine its FP32 reduction
   with SwiGLU, preserving both GEMM output BF16 casts and the SiLU BF16 cast.
@@ -581,7 +589,7 @@ validation here does not establish numerical correctness.
 - Draft remains outside the engine until prior stages are measured.
 
 
-## Prepared stage 23 — verify matrix choices on full decode groups
+## Prepared stage 24 — verify matrix choices on full decode groups
 
 - Stage 18's isolated matrix timings did not improve its official hidden score.
 - Draft `agent/candidates/tune_decode.py` times complete reset-plus-decode
@@ -606,3 +614,31 @@ validation here does not establish numerical correctness.
   multi-token causal FlashAttention, and ordered output buffering. Different
   acceptance rates across prompts can threaten the timing-spread gate.
 - Do not attempt before the cheaper measured kernel experiments are exhausted.
+
+
+## Stage 22 — select cuBLAS/cuBLASLt for prefill
+
+- Pinned PyTorch 2.5.1 exposes `torch.backends.cuda.preferred_blas_library`;
+  its CUDA BF16 GEMM implementation honors cuBLASLt for ordinary no-bias GEMMs.
+- https://raw.githubusercontent.com/pytorch/pytorch/v2.5.1/torch/backends/cuda/__init__.py
+- https://raw.githubusercontent.com/pytorch/pytorch/v2.5.1/aten/src/ATen/cuda/CUDABlas.cpp
+- Capture and time both complete prefill graphs during warmup, including all
+  existing pointwise checks. Keep cuBLASLt only with a 3% timing win, identical
+  first tokens, and close BF16 prefill logits. Official replay remains required.
+- Switch the backend only after native RoPE computation and restore it after
+  prefill, so decode selection and tiny FP32 rotary GEMMs keep their backend.
+- Prioritize this standard-library option before the prepared gate/up fusion
+  and full-decode selector. No measured-call tuning or backend switching.
+
+
+## Prepared stage 22a — cuBLASLt decode matrix candidate
+
+- If prefill backend selection is insufficient, independently add native
+  cuBLASLt linear to the existing per-category decode selector.
+- `agent/candidates/lt_linear.py` scopes the backend override to one BF16
+  linear call and restores the prior preference, leaving rotary unaffected.
+- The existing all-layer graph timing and numerical checks select it only
+  when faster. Calls occur during warmup/capture; replay has no Python switches.
+- Source draft only. Prefer this library-backed option before stages 23/24.
+
+- Stage 22 archive validation passes; submitting after stage 21 passed all gates.
